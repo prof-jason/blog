@@ -53,7 +53,6 @@ def _call(messages: list[dict[str, str]], response_model: type[T], **options) ->
             response_format=response_model,
             reasoning_effort="low",
             extra_body=EXTRA_BODY,
-            num_retries=NUM_RETRIES,
             retry_strategy=RETRY_STRATEGY,
             **options,
         )
@@ -72,16 +71,21 @@ def structured_completion(
     response_model: type[T],
     *,
     parse_attempts: int | None = None,
+    num_retries: int | None = None,
     max_tokens: int | None = None,
     timeout: float = TIMEOUT_SECONDS,
 ) -> T:
     """Call the model and parse its reply into `response_model`.
 
     `parse_attempts` (default MAX_PARSE_ATTEMPTS) is how many requests to spend on unusable output;
-    callers that manage their own retries pass 1.
+    callers that manage their own retries pass 1. `num_retries` (default NUM_RETRIES) is how many
+    times LiteLLM retries API errors, and `timeout` applies to each attempt.
     """
     attempts = MAX_PARSE_ATTEMPTS if parse_attempts is None else parse_attempts
-    options = {"timeout": timeout} | ({"max_tokens": max_tokens} if max_tokens else {})
+    options = {
+        "timeout": timeout,
+        "num_retries": NUM_RETRIES if num_retries is None else num_retries,
+    } | ({"max_tokens": max_tokens} if max_tokens else {})
     for attempt in range(1, attempts + 1):
         try:
             return _call(messages, response_model, **options)

@@ -27,7 +27,7 @@ def openrouter_calls(request, monkeypatch):
             raise AssertionError("Tests must not call OpenRouter: mock llm.completion or mark the test live_llm")
         if len(calls) > 1:
             raise AssertionError("A live_llm test may make only one OpenRouter request")
-        return real_completion(**kwargs)
+        return real_completion(**kwargs | {"num_retries": 0})  # whatever the caller asked for
 
     monkeypatch.setattr(llm, "completion", guarded)
     if live:

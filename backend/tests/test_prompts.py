@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +14,7 @@ from app.prompts import GeneratedPrompt
 def fake_llm(monkeypatch):
     calls = []
 
-    def fake(messages, response_model):
+    def fake(messages, response_model, **_):
         calls.append((messages, response_model))
         return GeneratedPrompt(prompt="  Write about the tide.  ", example=" The tide came in slowly. ")
 
@@ -42,7 +44,7 @@ def test_rejects_invalid_subject(client, fake_llm, subject):
 
 
 def test_llm_failure_returns_502(client, monkeypatch):
-    def boom(messages, response_model):
+    def boom(messages, response_model, **_):
         raise llm.LLMError("provider down")
 
     monkeypatch.setattr(llm, "structured_completion", boom)
@@ -215,3 +217,110 @@ def test_generate_batch_makes_one_request_even_for_unusable_output(monkeypatch):
     with pytest.raises(llm.LLMError):
         prompts.generate_batch(["Oceans"])
     assert len(calls) == 1  # the warmer, not the wrapper, decides whether to spend another
+
+
+# --- Falling back on blank replies and on no reply --------------------------
+
+
+def _store_prompt(client_app_db_path, subject="Oceans"):
+    from contextlib import closing
+
+    from app.db import connect
+    from app.prompt_store import save
+
+    with closing(connect(client_app_db_path)) as conn:
+        save(conn, StoredPrompt(subject=subject, prompt="Stored prompt.", example="Stored example."))
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['{"prompt": "", "example": ""}', '{"prompt": "   ", "example": "E"}', '{"prompt": "P", "example": "\\n\\t"}'],
+)
+def test_blank_reply_falls_back_to_a_stored_prompt(client, db_path, monkeypatch, content):
+    _store_prompt(db_path)
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response(content))
+
+    body = client.post("/api/prompts", json={"subject": "Oceans"}).json()
+
+    assert body["source"] == "stored"
+    assert body["prompt"] == "Stored prompt."
+
+
+def test_blank_reply_with_nothing_stored_is_an_error_not_an_empty_card(client, monkeypatch):
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response('{"prompt": " ", "example": " "}'))
+    assert client.post("/api/prompts", json={"subject": "Oceans"}).status_code == 502
+
+
+def test_reply_text_is_stripped(monkeypatch):
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response('{"prompt": "  P \\n", "example": "\\tE "}'))
+    assert llm.structured_completion([], GeneratedPrompt) == GeneratedPrompt(prompt="P", example="E")
+
+
+def test_card_clicks_use_tight_limits_so_abandoned_calls_stay_cheap(monkeypatch):
+    captured = []
+
+    def fake_completion(**kwargs):
+        captured.append(kwargs)
+        return _fake_response("not json")
+
+    monkeypatch.setattr(llm, "completion", fake_completion)
+    with pytest.raises(llm.LLMError):
+        prompts.generate_for_subject("Oceans")
+
+    assert len(captured) == 1  # bad output falls back instead of re-asking
+    assert captured[0]["timeout"] == prompts.LIVE_ATTEMPT_TIMEOUT_SECONDS == 15
+    assert captured[0]["num_retries"] == prompts.LIVE_NUM_RETRIES == 1
+    assert prompts.LIVE_ATTEMPT_TIMEOUT_SECONDS < prompts.LIVE_DEADLINE_SECONDS
+
+
+@pytest.fixture
+def stuck_provider(monkeypatch):
+    """OpenRouter never answers (until the test ends), and the click deadline is shortened."""
+    release = threading.Event()
+
+    def hang(**_):
+        release.wait(10)
+        return _fake_response('{"prompt": "Too late", "example": "Too late"}')
+
+    monkeypatch.setattr(llm, "completion", hang)
+    monkeypatch.setattr(prompts, "LIVE_DEADLINE_SECONDS", 0.3)
+    yield
+    release.set()
+
+
+def test_no_response_falls_back_at_the_deadline(client, db_path, stuck_provider):
+    _store_prompt(db_path)
+
+    started = time.monotonic()
+    response = client.post("/api/prompts", json={"subject": "Oceans"})
+    elapsed = time.monotonic() - started
+
+    assert response.json()["source"] == "stored"
+    assert response.json()["prompt"] == "Stored prompt."
+    assert elapsed < 2
+
+
+def test_no_response_with_nothing_stored_returns_502_at_the_deadline(client, stuck_provider):
+    started = time.monotonic()
+    assert client.post("/api/prompts", json={"subject": "Oceans"}).status_code == 502
+    assert time.monotonic() - started < 2
+
+
+def test_answer_within_the_deadline_is_served_live(client, monkeypatch):
+    monkeypatch.setattr(prompts, "LIVE_DEADLINE_SECONDS", 5)
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response('{"prompt": "P", "example": "E"}'))
+    body = client.post("/api/prompts", json={"subject": "Oceans"}).json()
+    assert (body["source"], body["prompt"]) == ("live", "P")
+
+
+def test_startup_batch_keeps_generous_limits(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response('{"prompts": []}')
+
+    monkeypatch.setattr(llm, "completion", fake_completion)
+    prompts.generate_batch(["Oceans"])
+    assert captured["num_retries"] == llm.NUM_RETRIES
+    assert captured["timeout"] == prompts.BATCH_TIMEOUT_SECONDS

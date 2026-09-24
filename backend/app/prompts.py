@@ -1,8 +1,9 @@
 import logging
-from typing import Literal
+import threading
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app import llm, prompt_store
 from app.db import Db
@@ -29,6 +30,13 @@ could learn from. Plain prose, no title, no preamble.
 Make each prompt feel distinct: vary the angle, form and opening words across subjects.
 Keep everything appropriate for a school classroom."""
 
+# A student is waiting on a card click: give up after this long and serve a stored prompt instead.
+LIVE_DEADLINE_SECONDS = 20
+# Per-attempt limits for a click, so a request abandoned at the deadline can't keep spending the
+# daily quota: at most 1 retry (2 requests), and bad output falls back instead of re-asking.
+LIVE_ATTEMPT_TIMEOUT_SECONDS = 15
+LIVE_NUM_RETRIES = 1
+
 # Ten prompts and examples are ~2,000 words; give the reply room and time to finish.
 BATCH_MAX_TOKENS = 8000
 BATCH_TIMEOUT_SECONDS = 180
@@ -38,9 +46,13 @@ class PromptRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=80)
 
 
+# Blank or whitespace-only text is unusable output, so it fails validation (and falls back).
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class GeneratedPrompt(BaseModel):
-    prompt: str
-    example: str
+    prompt: NonBlank
+    example: NonBlank
 
 
 class BatchEntry(BaseModel):
@@ -65,8 +77,38 @@ def generate_for_subject(subject: str) -> GeneratedPrompt:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Subject: {subject}"},
     ]
-    result = llm.structured_completion(messages, GeneratedPrompt)
-    return GeneratedPrompt(prompt=result.prompt.strip(), example=result.example.strip())
+    return llm.structured_completion(
+        messages,
+        GeneratedPrompt,
+        parse_attempts=1,
+        num_retries=LIVE_NUM_RETRIES,
+        timeout=LIVE_ATTEMPT_TIMEOUT_SECONDS,
+    )
+
+
+def generate_live(subject: str) -> GeneratedPrompt:
+    """generate_for_subject, but raises LLMError if there's no answer within LIVE_DEADLINE_SECONDS.
+
+    The call runs on a daemon thread so the endpoint can stop waiting; per-attempt limits bound how
+    long (and how many requests) an abandoned call can go on for.
+    """
+    outcome: dict[str, object] = {}
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["result"] = generate_for_subject(subject)
+        except BaseException as exc:  # handed back to the waiting request below
+            outcome["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="live-prompt", daemon=True).start()
+    if not done.wait(LIVE_DEADLINE_SECONDS):
+        raise llm.LLMError(f"No response from the model within {LIVE_DEADLINE_SECONDS}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
 
 
 def generate_batch(subjects: list[str]) -> list[prompt_store.StoredPrompt]:
@@ -103,7 +145,7 @@ def generate_prompt(body: PromptRequest, db: Db) -> PromptResponse:
     if not subject:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Subject must not be blank")
     try:
-        result = generate_for_subject(subject)
+        result = generate_live(subject)
     except llm.LLMError:
         logger.exception("Prompt generation failed for subject %r", subject)
         stored = prompt_store.find_fallback(db, subject)

@@ -76,7 +76,7 @@ def test_shared_subjects_file_is_readable():
 
 @pytest.fixture
 def failing_llm(monkeypatch):
-    def boom(messages, response_model):
+    def boom(messages, response_model, **_):
         raise llm.LLMError("Service temporarily overloaded")
 
     monkeypatch.setattr(llm, "structured_completion", boom)

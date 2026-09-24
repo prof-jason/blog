@@ -78,7 +78,9 @@ from app.prompts import GeneratedPrompt
 @pytest.mark.live_llm
 def test_live(openrouter_calls):
     assert llm.NUM_RETRIES == 0 and llm.MAX_PARSE_ATTEMPTS == 1
-    assert llm.structured_completion([], GeneratedPrompt) == GeneratedPrompt(prompt="P", example="E")
+    # Even a caller asking for retries gets none in a live test.
+    result = llm.structured_completion([], GeneratedPrompt, num_retries=5)
+    assert result == GeneratedPrompt(prompt="P", example="E")
     assert len(openrouter_calls) == 1
 """,
     )
@@ -114,7 +116,7 @@ from app import llm
 from app.prompts import GeneratedPrompt
 
 def test_mocked(monkeypatch):
-    monkeypatch.setattr(llm, "structured_completion", lambda m, r: r(prompt="x", example="y"))
+    monkeypatch.setattr(llm, "structured_completion", lambda m, r, **_: r(prompt="x", example="y"))
     assert llm.structured_completion([], GeneratedPrompt).prompt == "x"
 """,
     )
