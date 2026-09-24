@@ -7,8 +7,8 @@ export default function Home() {
         <p className="eyebrow">Writing Room</p>
         <h1>Prompt Generator</h1>
         <p className="lede">
-          Tap the card to reveal a writing prompt, tap again to see an example response. Roll the
-          die whenever you want a new subject.
+          Read your subject and prompt, then tap the card to flip it over for an example response.
+          Roll the die whenever you want a new subject.
         </p>
       </header>
       <PromptStudio />

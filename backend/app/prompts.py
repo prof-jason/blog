@@ -147,6 +147,15 @@ def generate_batch(subjects: list[str]) -> list[prompt_store.StoredPrompt]:
     return list(usable.values())
 
 
+@router.get("/stored")
+def stored_prompt(db: Db) -> PromptResponse:
+    """A random pre-generated prompt, so the page can open on a full card without spending a request."""
+    stored = prompt_store.random_prompt(db)
+    if stored is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No stored prompts yet")
+    return PromptResponse(**stored.model_dump(), source="stored")
+
+
 @router.post("")
 def generate_prompt(body: PromptRequest, db: Db) -> PromptResponse:
     subject = body.subject.strip()

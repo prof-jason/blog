@@ -57,6 +57,11 @@ def find_fallback(db: sqlite3.Connection, subject: str) -> StoredPrompt | None:
     return StoredPrompt(**row) if row else None
 
 
+def random_prompt(db: sqlite3.Connection) -> StoredPrompt | None:
+    row = db.execute("SELECT subject, prompt, example FROM stored_prompts ORDER BY RANDOM() LIMIT 1").fetchone()
+    return StoredPrompt(**row) if row else None
+
+
 class PromptWarmer:
     """Pre-generates `target` prompts (one per distinct subject) on a background thread."""
 

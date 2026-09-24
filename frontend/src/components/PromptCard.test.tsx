@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CardFace } from "@/lib/cardFace";
 import { FLIP_DURATION_MS, flipKeyframes, restingTransform } from "@/lib/useCardFlip";
 import PromptCard, { type Generation } from "./PromptCard";
 
@@ -45,14 +44,19 @@ const ready: Generation = {
   prompt: "Write about tides.",
   example: "The tide came in slowly.",
   source: "live",
+  fallback: false,
 };
 
-function renderCard(face: CardFace) {
-  const view = render(<PromptCard subject="Oceans" face={face} generation={ready} onAdvance={() => {}} />);
+function renderCard(flipped: boolean) {
+  const view = render(
+    <PromptCard subject="Oceans" flipped={flipped} generation={ready} onClick={() => {}} />,
+  );
   return {
     ...view,
-    setFace: (next: CardFace) =>
-      view.rerender(<PromptCard subject="Oceans" face={next} generation={ready} onAdvance={() => {}} />),
+    setFlipped: (next: boolean) =>
+      view.rerender(
+        <PromptCard subject="Oceans" flipped={next} generation={ready} onClick={() => {}} />,
+      ),
   };
 }
 
@@ -61,20 +65,14 @@ const finishAll = () => animations.forEach((a) => (a.playState = "finished"));
 
 describe("card flip animation", () => {
   it("does not animate on first render, even when mounted flipped", () => {
-    renderCard("subject");
-    renderCard("example");
-    expect(animations).toHaveLength(0);
-  });
-
-  it("does not animate when revealing the prompt (no flip)", () => {
-    const { setFace } = renderCard("subject");
-    setFace("prompt");
+    renderCard(false);
+    renderCard(true);
     expect(animations).toHaveLength(0);
   });
 
   it("flips to the back with a lift, a floor shadow and edge shading", () => {
-    const { setFace, container } = renderCard("prompt");
-    setFace("example");
+    const { setFlipped, container } = renderCard(false);
+    setFlipped(true);
 
     const targets = animations.map((a) => a.target);
     expect(targets).toEqual([
@@ -96,10 +94,10 @@ describe("card flip animation", () => {
   });
 
   it("flips back to the front in the opposite direction", () => {
-    const { setFace } = renderCard("prompt");
-    setFace("example");
+    const { setFlipped } = renderCard(false);
+    setFlipped(true);
     finishAll();
-    setFace("subject");
+    setFlipped(false);
 
     expect(animations).toHaveLength(8);
     const back = animations[4].keyframes;
@@ -108,9 +106,9 @@ describe("card flip animation", () => {
   });
 
   it("reverses a flip that is still running instead of jumping", () => {
-    const { setFace } = renderCard("prompt");
-    setFace("example");
-    setFace("subject"); // e.g. clicked again, or the die was rolled, mid-flip
+    const { setFlipped } = renderCard(false);
+    setFlipped(true);
+    setFlipped(false); // e.g. clicked again, or the die was rolled, mid-flip
 
     expect(animations).toHaveLength(4);
     for (const animation of animations) {
@@ -120,8 +118,8 @@ describe("card flip animation", () => {
 
   it("skips the animation for users who prefer reduced motion", () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") }));
-    const { setFace, container } = renderCard("prompt");
-    setFace("example");
+    const { setFlipped, container } = renderCard(false);
+    setFlipped(true);
 
     expect(animations).toHaveLength(0);
     expect(container.querySelector(".card-inner")).toHaveClass("is-flipped");
@@ -129,14 +127,14 @@ describe("card flip animation", () => {
 
   it("still switches sides when the Web Animations API is unavailable", () => {
     delete (Element.prototype as Partial<Element>).animate;
-    const { setFace, container } = renderCard("prompt");
-    setFace("example");
+    const { setFlipped, container } = renderCard(false);
+    setFlipped(true);
     expect(container.querySelector(".card-inner")).toHaveClass("is-flipped");
   });
 
   it("cancels running animations on unmount", () => {
-    const { setFace, unmount } = renderCard("prompt");
-    setFace("example");
+    const { setFlipped, unmount } = renderCard(false);
+    setFlipped(true);
     unmount();
     for (const animation of animations) {
       expect(animation.cancel).toHaveBeenCalled();
@@ -144,8 +142,8 @@ describe("card flip animation", () => {
   });
 
   it("keeps the example on the back while it flips away, hidden from assistive tech", () => {
-    const { setFace, container } = renderCard("example");
-    setFace("subject");
+    const { setFlipped, container } = renderCard(true);
+    setFlipped(false);
 
     const back = container.querySelector(".card-back")!;
     expect(screen.getByTestId("example-text")).toHaveTextContent("The tide came in slowly.");

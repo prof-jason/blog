@@ -234,14 +234,11 @@ body {
   flex-direction: column;
   gap: 0.35rem;
   margin-top: 1rem;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.35s ease, transform 0.35s ease;
 }
 
-.card-prompt.is-shown {
-  opacity: 1;
-  transform: none;
+/* Status rows sit directly under the "Your prompt" label. */
+.card-prompt .card-status {
+  margin-top: 0;
 }
 
 .card-prompt-text,
@@ -325,7 +322,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card-prompt,
   .die {
     transition: none;
   }
