@@ -1,0 +1,253 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f4efe4;
+  --card: #fffdf7;
+  --ink: #1d2740;
+  --muted: #5d6478;
+  --rule: #c9dcee;
+  --margin: #d9574b;
+  --accent: #c2410c;
+  --die: #fffdf7;
+  --pip: #1d2740;
+  --shadow: 0 1px 2px rgb(29 39 64 / 0.08), 0 12px 32px -12px rgb(29 39 64 / 0.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #161b27;
+    --card: #232a3a;
+    --ink: #eef0f5;
+    --muted: #a3aabb;
+    --rule: #2f3a52;
+    --margin: #e0776c;
+    --accent: #fb923c;
+    --die: #eef0f5;
+    --pip: #161b27;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-body);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body), Georgia, serif;
+}
+
+/* ---------- Page ---------- */
+
+.page {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 3.5rem 1rem 4rem;
+}
+
+.page-header {
+  max-width: 36rem;
+  margin-bottom: 2.5rem;
+}
+
+.page-header h1 {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: clamp(2.25rem, 5vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.eyebrow,
+.card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.lede {
+  margin-top: 0.75rem;
+  font-size: 1.125rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.studio {
+  display: grid;
+  gap: 2.5rem;
+  align-items: center;
+}
+
+@media (min-width: 768px) {
+  .studio {
+    grid-template-columns: minmax(0, 1fr) 14rem;
+    gap: 3rem;
+  }
+}
+
+/* ---------- Card ---------- */
+
+.card-scene {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  perspective: 1400px;
+  border-radius: 0.75rem;
+}
+
+.card-scene:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+.card-inner {
+  position: relative;
+  display: grid;
+  min-height: 22rem;
+  transform-style: preserve-3d;
+  transition: transform 0.7s cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+
+.card-inner.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 2rem 1.75rem 2rem 3.25rem;
+  border-radius: 0.75rem;
+  background-color: var(--card);
+  /* Ruled index card: a red margin line plus faint blue rules. */
+  background-image:
+    linear-gradient(to right, transparent 2.25rem, var(--margin) 2.25rem, var(--margin) calc(2.25rem + 1.5px), transparent calc(2.25rem + 1.5px)),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(1.9rem - 1px), var(--rule) calc(1.9rem - 1px), var(--rule) 1.9rem);
+  background-position: 0 0, 0 4.5rem;
+  background-repeat: no-repeat, repeat;
+  box-shadow: var(--shadow);
+  backface-visibility: hidden;
+}
+
+.card-back {
+  transform: rotateY(180deg);
+}
+
+.card-subject {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.card-subject--small {
+  font-size: 1.35rem;
+}
+
+.card-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.card-prompt.is-shown {
+  opacity: 1;
+  transform: none;
+}
+
+.card-prompt-text,
+.card-example {
+  font-size: 1.2rem;
+  line-height: 1.9rem;
+}
+
+.card-example {
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
+.card-hint {
+  display: block;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+/* ---------- Die ---------- */
+
+.dice-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.die {
+  width: 8.5rem;
+  height: 8.5rem;
+  cursor: pointer;
+  border-radius: 1.5rem;
+  filter: drop-shadow(0 10px 14px rgb(29 39 64 / 0.25));
+  transition: transform 0.2s ease;
+}
+
+.die:hover:not(:disabled) {
+  transform: rotate(-6deg) scale(1.04);
+}
+
+.die:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+.die:disabled {
+  cursor: progress;
+}
+
+.die.is-rolling {
+  animation: tumble 0.7s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+
+.die-body {
+  fill: var(--die);
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+
+.die-pip {
+  fill: var(--pip);
+}
+
+.dice-caption {
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+@keyframes tumble {
+  0% { transform: rotate(0) translateY(0); }
+  30% { transform: rotate(200deg) translateY(-18px) scale(1.05); }
+  65% { transform: rotate(320deg) translateY(4px); }
+  100% { transform: rotate(360deg) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-inner,
+  .card-prompt,
+  .die {
+    transition: none;
+  }
+
+  .die.is-rolling {
+    animation: none;
+  }
+}
