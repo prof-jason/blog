@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchPrompt, fetchStoredPrompt } from "./api";
+import { fetchNextPrompt, PromptsNotReadyError } from "./api";
 
 function stubFetch(response: Response) {
   const mock = vi.fn().mockResolvedValue(response);
@@ -7,77 +7,53 @@ function stubFetch(response: Response) {
   return mock;
 }
 
+const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
+
 afterEach(() => vi.unstubAllGlobals());
 
-describe("fetchPrompt", () => {
-  it("POSTs the subject as JSON and returns the prompt and example", async () => {
-    const mock = stubFetch(
-      new Response(JSON.stringify({ subject: "Home", prompt: "P", example: "E" }), { status: 200 }),
-    );
+describe("fetchNextPrompt", () => {
+  it("GETs the next card, excluding the current subject", async () => {
+    const mock = stubFetch(json(200, { subject: "Home", prompt: "P", example: "E" }));
     const controller = new AbortController();
 
-    await expect(fetchPrompt("Home", controller.signal)).resolves.toEqual({
+    await expect(fetchNextPrompt("A Map & Compass", controller.signal)).resolves.toEqual({
       subject: "Home",
       prompt: "P",
       example: "E",
-      source: "live",
     });
-    expect(mock).toHaveBeenCalledWith("/api/prompts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject: "Home" }),
+    expect(mock).toHaveBeenCalledWith("/api/prompts/next?exclude=A%20Map%20%26%20Compass", {
       signal: controller.signal,
     });
   });
 
-  it("passes through a stored fallback for a different subject", async () => {
-    stubFetch(
-      new Response(JSON.stringify({ subject: "Music", prompt: "P", example: "E", source: "stored" }), {
-        status: 200,
-      }),
-    );
-    await expect(fetchPrompt("Home")).resolves.toEqual({
-      subject: "Music",
-      prompt: "P",
-      example: "E",
-      source: "stored",
-    });
+  it("asks without an exclusion for the first card", async () => {
+    const mock = stubFetch(json(200, { subject: "Home", prompt: "P", example: "E" }));
+    await fetchNextPrompt(null);
+    expect(mock).toHaveBeenCalledWith("/api/prompts/next", { signal: undefined });
   });
 
-  it("throws the server's error detail", async () => {
-    stubFetch(new Response(JSON.stringify({ detail: "Provider down" }), { status: 502 }));
-    await expect(fetchPrompt("Home")).rejects.toThrow("Provider down");
+  it("signals 'not ready yet' when the server says when to retry", async () => {
+    stubFetch(json(503, { detail: "Prompts are being written." }, { "Retry-After": "3" }));
+    const error = await fetchNextPrompt(null).catch((e) => e);
+    expect(error).toBeInstanceOf(PromptsNotReadyError);
+    expect(error.retryAfterMs).toBe(3000);
   });
 
-  it("throws a friendly fallback when the error body isn't usable", async () => {
+  it("treats a 503 without Retry-After as a plain error", async () => {
+    stubFetch(json(503, { detail: "No prompts are available right now." }));
+    const error = await fetchNextPrompt(null).catch((e) => e);
+    expect(error).not.toBeInstanceOf(PromptsNotReadyError);
+    expect(error.message).toBe("No prompts are available right now.");
+  });
+
+  it("throws a friendly message when the error body isn't usable", async () => {
     stubFetch(new Response("<html>Bad Gateway</html>", { status: 502 }));
-    await expect(fetchPrompt("Home")).rejects.toThrow("Couldn't generate a prompt right now.");
-  });
-});
-
-describe("fetchStoredPrompt", () => {
-  it("GETs a stored prompt for the opening card", async () => {
-    const mock = stubFetch(
-      new Response(JSON.stringify({ subject: "Home", prompt: "P", example: "E", source: "stored" }), {
-        status: 200,
-      }),
-    );
-    await expect(fetchStoredPrompt()).resolves.toEqual({
-      subject: "Home",
-      prompt: "P",
-      example: "E",
-      source: "stored",
-    });
-    expect(mock).toHaveBeenCalledWith("/api/prompts/stored", { signal: undefined });
+    await expect(fetchNextPrompt(null)).rejects.toThrow("Couldn't get a prompt right now.");
   });
 
-  it("returns null when nothing is stored yet", async () => {
-    stubFetch(new Response(JSON.stringify({ detail: "No stored prompts yet" }), { status: 404 }));
-    await expect(fetchStoredPrompt()).resolves.toBeNull();
-  });
-
-  it("returns null on a network error", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    await expect(fetchStoredPrompt()).resolves.toBeNull();
+  it("rejects a response missing a field instead of showing a blank card", async () => {
+    stubFetch(json(200, { subject: "Home", prompt: "P" }));
+    await expect(fetchNextPrompt(null)).rejects.toThrow("Couldn't get a prompt right now.");
   });
 });

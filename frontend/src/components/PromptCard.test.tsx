@@ -43,19 +43,17 @@ const ready: Generation = {
   subject: "Oceans",
   prompt: "Write about tides.",
   example: "The tide came in slowly.",
-  source: "live",
-  fallback: false,
 };
 
 function renderCard(flipped: boolean) {
   const view = render(
-    <PromptCard subject="Oceans" flipped={flipped} generation={ready} onClick={() => {}} />,
+    <PromptCard flipped={flipped} generation={ready} onClick={() => {}} />,
   );
   return {
     ...view,
     setFlipped: (next: boolean) =>
       view.rerender(
-        <PromptCard subject="Oceans" flipped={next} generation={ready} onClick={() => {}} />,
+        <PromptCard flipped={next} generation={ready} onClick={() => {}} />,
       ),
   };
 }

@@ -54,5 +54,5 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def client(db_path, static_dir):
-    with TestClient(create_app(db_path=db_path, static_dir=static_dir, warm_up_count=0)) as test_client:
+    with TestClient(create_app(db_path=db_path, static_dir=static_dir, batch_size=0)) as test_client:
         yield test_client

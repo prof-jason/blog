@@ -247,11 +247,6 @@ body {
   line-height: 1.9rem;
 }
 
-.card-note {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
 .card-example {
   margin-top: 0.5rem;
   font-style: italic;

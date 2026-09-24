@@ -8,11 +8,10 @@ card and a die:
 - The **front of the card** shows a subject and an AI-generated writing prompt for it.
 - **Clicking the card** flips it over (a 3D flip animation) to an example response written the way a
   strong 4th–6th grader would write it. Clicking again flips it back.
-- **Rolling the die** picks a new subject, turns the card to its front, and generates that subject's
-  prompt.
+- **Rolling the die** brings a new subject with its prompt, on the front of the card.
 
-Prompts come from free LLMs on OpenRouter. Ten are pre-generated at startup and used as fallbacks
-when live generation fails. Sign-up/login endpoints exist on the backend, but the frontend doesn't
+Prompts come from free LLMs on OpenRouter, written ahead of time into a **prompt pool**. Rolls are
+served from the pool and never wait on the AI. Sign-up/login endpoints exist on the backend, but the frontend doesn't
 use them yet: the app has no login.
 
 ## Development process
@@ -45,15 +44,20 @@ Pull requests:
 - `OPENROUTER_API_KEY` is in `.env` in the project root.
 - **Quota:** OpenRouter's free tier limits **requests per day per account** (`free-models-per-day`),
   not output size. Protect it:
-  - Startup warm-up asks for all 10 fallback prompts in **one** request, and makes at most 2.
+  - Rolls never call the LLM. The pool (`backend/app/prompt_store.py`) is filled at startup and
+    refilled in the background when fewer than `PROMPT_REFILL_BELOW` (5) unseen prompts remain,
+    `PROMPT_BATCH_SIZE` (10) prompts per request, at most 2 requests per refill, one refill at a
+    time, with a 60s cooldown after a failed refill.
+  - Every LLM request is charged to a `RequestBudget` (`backend/app/budget.py`),
+    `LLM_DAILY_REQUEST_LIMIT` (40) per rolling 24 hours. Once it's spent, saved prompts are
+    re-served.
   - Automated tests never call OpenRouter. A conftest guard fails any test that tries.
     `RUN_LIVE_LLM=1` allows exactly one real request, with no retries.
   - Avoid needless container restarts and live calls while developing.
-- Card clicks give up after 20s (`LIVE_DEADLINE_SECONDS`) and serve a stored prompt. Blank or
-  unusable replies fall back too.
-- The model instructions (`backend/app/prompts.py`) share one `_WRITING_GUIDELINES` block that
-  targets grades 4–6. Both the single-prompt and batch prompts use it, so keep grade-level changes
-  there.
+- Batch replies are parsed leniently: incomplete entries, entries for subjects that weren't asked
+  for, and duplicates are dropped, and the rest are kept.
+- The grade 4–6 guidance lives in one `_WRITING_GUIDELINES` block in `backend/app/prompts.py`, used
+  by the batch instructions. Make grade-level changes there.
 
 ## Technical design
 
@@ -66,9 +70,12 @@ Pull requests:
   - Next 16 differs from older versions. Read `frontend/AGENTS.md` and the guides in
     `frontend/node_modules/next/dist/docs/` before changing Next-specific code.
 - The database is SQLite, created from scratch each time the server starts. Tables: `users` and
-  `sessions` (sign up / sign in) and `stored_prompts` (the startup fallbacks).
-- `frontend/src/data/subjects.json` is the single subject list, shared by the die and the backend
-  warm-up.
+  `sessions` (sign up / sign in) and `stored_prompts` (the prompt pool, with a `served_count`).
+- `backend/subjects.json` is the subject list. The server picks subjects; the frontend has no list.
+- The container runs as a non-root user and has a `HEALTHCHECK`. The start scripts use
+  `--restart unless-stopped` and bind to `127.0.0.1` unless `BLOG_HOST` is set (e.g. `0.0.0.0` for
+  classroom network access). The Windows scripts check for the container with `docker ps` instead
+  of discarding `docker rm` errors (Windows PowerShell 5.1 turns those into terminating errors).
 - Scripts in `scripts/`:
 ```bash
 # Mac
@@ -112,7 +119,11 @@ The app is available at http://localhost:8000
 - **PR #11 (open):** prompts and examples written for grades 4–6 (client feedback).
 - **PR #12 (open, merge after #11):** a two-step card (client feedback). The front shows the
   subject and prompt together, a click flips to the example, and the die brings a new subject and
-  prompt. The page opens on a stored prompt (`GET /api/prompts/stored`), so the first card costs no
-  request.
+  prompt.
+- **Code review** (`review.md`), then **fixes for its High and Medium findings except H2**: rolls
+  are served from a background-refilled prompt pool (`GET /api/prompts/next`) with a daily request
+  budget, replacing live per-roll generation and the 20s card-click limit (H1, M1, M4). The
+  container is hardened (M3) and the Windows scripts are fixed (M2). H2 (output safety and
+  unrestricted subjects) is deferred by request.
 - **Not started yet:** a login UI wired to the existing auth endpoints (nothing requires sign-in
   today).

@@ -35,7 +35,12 @@ def test_unmarked_test_cannot_reach_openrouter(pytester, fake_openrouter):
         pytester,
         """
 from app import llm
-from app.prompts import GeneratedPrompt
+from typing import Annotated
+from pydantic import BaseModel
+
+class GeneratedPrompt(BaseModel):
+    prompt: str
+    example: str
 
 def test_forgot_to_mock():
     try:
@@ -53,12 +58,12 @@ def test_unmarked_test_through_the_api_is_caught_even_with_a_fallback(pytester, 
     result = run(
         pytester,
         """
-from app.prompts import generate_for_subject
+from app.prompts import generate_batch
 from app import llm
 
 def test_endpoint_style_call():
     try:
-        generate_for_subject("Oceans")
+        generate_batch(["Oceans"])
     except llm.LLMError:
         pass
 """,
@@ -73,7 +78,12 @@ def test_live_test_makes_exactly_one_request_without_retries(pytester, fake_open
         """
 import pytest
 from app import llm
-from app.prompts import GeneratedPrompt
+from typing import Annotated
+from pydantic import BaseModel
+
+class GeneratedPrompt(BaseModel):
+    prompt: str
+    example: str
 
 @pytest.mark.live_llm
 def test_live(openrouter_calls):
@@ -95,7 +105,12 @@ def test_live_test_cannot_make_a_second_request(pytester, fake_openrouter):
         """
 import pytest
 from app import llm
-from app.prompts import GeneratedPrompt
+from typing import Annotated
+from pydantic import BaseModel
+
+class GeneratedPrompt(BaseModel):
+    prompt: str
+    example: str
 
 @pytest.mark.live_llm
 def test_greedy_live():
@@ -113,7 +128,12 @@ def test_mocked_tests_are_unaffected(pytester, fake_openrouter):
         pytester,
         """
 from app import llm
-from app.prompts import GeneratedPrompt
+from typing import Annotated
+from pydantic import BaseModel
+
+class GeneratedPrompt(BaseModel):
+    prompt: str
+    example: str
 
 def test_mocked(monkeypatch):
     monkeypatch.setattr(llm, "structured_completion", lambda m, r, **_: r(prompt="x", example="y"))

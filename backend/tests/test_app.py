@@ -6,7 +6,13 @@ from app.main import create_app
 
 
 def test_health(client):
-    assert client.get("/api/health").json() == {"status": "ok", "stored_prompts": 0}
+    assert client.get("/api/health").json() == {
+        "status": "ok",
+        "stored_prompts": 0,
+        "unserved_prompts": 0,
+        "refilling": False,
+        "requests_left_today": 40,
+    }
 
 
 def test_serves_static_frontend(client):
@@ -20,13 +26,13 @@ def test_api_routes_take_precedence_over_static(client):
 
 
 def test_runs_without_a_frontend_build(db_path, tmp_path):
-    with TestClient(create_app(db_path=db_path, static_dir=tmp_path / "missing", warm_up_count=0)) as c:
+    with TestClient(create_app(db_path=db_path, static_dir=tmp_path / "missing", batch_size=0)) as c:
         assert c.get("/api/health").status_code == 200
         assert c.get("/").status_code == 404
 
 
 def test_database_is_recreated_from_scratch_on_startup(db_path, static_dir):
-    app = create_app(db_path=db_path, static_dir=static_dir, warm_up_count=0)
+    app = create_app(db_path=db_path, static_dir=static_dir, batch_size=0)
     with TestClient(app) as c:
         c.post("/api/auth/signup", json={"email": "a@example.com", "password": "password123"})
     with sqlite3.connect(db_path) as conn:
