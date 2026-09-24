@@ -1,4 +1,4 @@
-"""Real call to OpenRouter/Cerebras. Opt in with RUN_LIVE_LLM=1 (needs OPENROUTER_API_KEY)."""
+"""Real call to OpenRouter (free models router). Opt in with RUN_LIVE_LLM=1 (needs OPENROUTER_API_KEY)."""
 
 import os
 

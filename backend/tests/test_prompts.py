@@ -53,7 +53,7 @@ def _fake_response(content):
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
-def test_structured_completion_uses_cerebras_and_parses(monkeypatch):
+def test_structured_completion_uses_free_router_and_parses(monkeypatch):
     captured = {}
 
     def fake_completion(**kwargs):
@@ -64,28 +64,67 @@ def test_structured_completion_uses_cerebras_and_parses(monkeypatch):
     result = llm.structured_completion([{"role": "user", "content": "hi"}], GeneratedPrompt)
 
     assert result == GeneratedPrompt(prompt="P", example="E")
-    assert captured["model"] == "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-    assert captured["extra_body"] == {"provider": {"order": ["cerebras"]}}
+    assert captured["model"] == "openrouter/openrouter/free"
+    assert captured["extra_body"] == {"provider": {"order": ["cerebras"], "require_parameters": True}}
     assert captured["response_format"] is GeneratedPrompt
     assert captured["reasoning_effort"] == "low"
     assert captured["num_retries"] == 3
     assert captured["retry_strategy"] == "exponential_backoff_retry"
 
 
-@pytest.mark.parametrize("content", ["not json", '{"prompt": "only prompt"}', None])
-def test_structured_completion_wraps_bad_output(monkeypatch, content):
+@pytest.mark.parametrize(
+    "content",
+    [
+        '```json\n{"prompt": "P", "example": "E"}\n```',
+        '```\n{"prompt": "P", "example": "E"}\n```',
+        'Here you go:\n{"prompt": "P", "example": "E"}\nHope this helps!',
+        '  {"prompt": "P", "example": "E"}  ',
+    ],
+)
+def test_structured_completion_tolerates_formatting_from_different_models(monkeypatch, content):
     monkeypatch.setattr(llm, "completion", lambda **_: _fake_response(content))
+    assert llm.structured_completion([], GeneratedPrompt) == GeneratedPrompt(prompt="P", example="E")
+
+
+@pytest.mark.parametrize("content", ["not json", '{"prompt": "only prompt"}', None, ""])
+def test_structured_completion_gives_up_on_persistently_bad_output(monkeypatch, content):
+    calls = []
+    monkeypatch.setattr(llm, "completion", lambda **_: calls.append(1) or _fake_response(content))
     with pytest.raises(llm.LLMError):
         llm.structured_completion([], GeneratedPrompt)
+    assert len(calls) == llm.MAX_PARSE_ATTEMPTS
 
 
-def test_structured_completion_wraps_provider_errors(monkeypatch):
+def test_structured_completion_retries_once_after_bad_output(monkeypatch):
+    replies = iter(["Sorry, I can't format that.", '{"prompt": "P", "example": "E"}'])
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response(next(replies)))
+    assert llm.structured_completion([], GeneratedPrompt) == GeneratedPrompt(prompt="P", example="E")
+
+
+def test_structured_completion_does_not_re_retry_provider_errors(monkeypatch):
+    calls = []
+
     def raise_error(**_):
+        calls.append(1)
         raise RuntimeError("rate limited")
 
     monkeypatch.setattr(llm, "completion", raise_error)
     with pytest.raises(llm.LLMError, match="rate limited"):
         llm.structured_completion([], GeneratedPrompt)
+    assert len(calls) == 1  # litellm's own num_retries already handled these
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [
+        ('{"a": 1}', '{"a": 1}'),
+        ('```json\n{"a": {"b": 2}}\n```', '{"a": {"b": 2}}'),
+        ('text {"a": 1} text', '{"a": 1}'),
+        ("no braces here", "no braces here"),
+    ],
+)
+def test_extract_json(content, expected):
+    assert llm.extract_json(content) == expected
 
 
 def test_retry_dependency_is_installed():
