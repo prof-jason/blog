@@ -1,3 +1,4 @@
+import importlib
 import random
 import threading
 from contextlib import closing
@@ -55,18 +56,13 @@ def test_load_subjects(tmp_path):
     assert load_subjects(tmp_path / "missing.json") == []
 
 
-@pytest.mark.parametrize(
-    "environ, expected",
-    [
-        ({}, 1),  # development default
-        ({"APP_ENV": "development"}, 1),
-        ({"APP_ENV": "production"}, 10),
-        ({"APP_ENV": "production", "PROMPT_WARM_UP_COUNT": "3"}, 3),
-        ({"PROMPT_WARM_UP_COUNT": "0"}, 0),
-    ],
-)
-def test_warm_up_count_defaults(environ, expected):
-    assert config.warm_up_count(environ) == expected
+def test_warm_up_count_defaults_to_10(monkeypatch):
+    monkeypatch.delenv("PROMPT_WARM_UP_COUNT", raising=False)
+    assert importlib.reload(config).WARM_UP_COUNT == 10
+    monkeypatch.setenv("PROMPT_WARM_UP_COUNT", "3")
+    assert importlib.reload(config).WARM_UP_COUNT == 3
+    monkeypatch.delenv("PROMPT_WARM_UP_COUNT")
+    importlib.reload(config)
 
 
 def test_shared_subjects_file_is_readable():
@@ -133,78 +129,100 @@ def test_prefers_live_generation_over_stored_prompts(client, db_path, monkeypatc
 # --- Warm-up --------------------------------------------------------------
 
 
-def test_warmer_stores_target_number_of_prompts(db, db_path):
-    warmer = PromptWarmer(db_path, SUBJECTS, target=3, generate=fake_generate, rng=random.Random(1))
+def fake_batch(subjects):
+    return [StoredPrompt(subject=s, **fake_generate(s).model_dump()) for s in subjects]
+
+
+class BatchRecorder:
+    """A generate_batch stand-in: replies[i] decides what request i returns (or raises)."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.requests: list[list[str]] = []
+
+    def __call__(self, subjects):
+        self.requests.append(list(subjects))
+        reply = self.replies[len(self.requests) - 1]
+        if isinstance(reply, Exception):
+            raise reply
+        return fake_batch(subjects[:reply])  # reply = how many of the requested come back usable
+
+
+def run_warmer(db_path, generate_batch, target=4, subjects=SUBJECTS):
+    warmer = PromptWarmer(db_path, subjects, target=target, generate_batch=generate_batch, rng=random.Random(1))
     warmer.start()
     warmer.join(timeout=5)
+    return warmer
 
+
+def test_warmer_stores_every_prompt_from_a_single_request(db, db_path):
+    batch = BatchRecorder(4)
+    warmer = run_warmer(db_path, batch)
+
+    assert len(batch.requests) == 1
+    assert sorted(batch.requests[0]) == sorted(SUBJECTS)  # all asked for at once
+    assert warmer.stored == 4
     rows = stored_rows(db)
-    assert len(rows) == 3
-    assert warmer.stored == 3
-    assert len({subject for subject, _, _ in rows}) == 3  # distinct subjects while they last
+    assert sorted(subject for subject, _, _ in rows) == sorted(SUBJECTS)
     for subject, prompt, example in rows:
-        assert subject in SUBJECTS
-        assert prompt == f"Write about {subject}."
-        assert example == f"An example about {subject}."
+        assert (prompt, example) == (f"Write about {subject}.", f"An example about {subject}.")
 
 
-def test_warmer_cycles_subjects_when_target_exceeds_them(db, db_path):
-    warmer = PromptWarmer(db_path, SUBJECTS, target=10, generate=fake_generate)
-    warmer.start()
-    warmer.join(timeout=5)
-    assert len(stored_rows(db)) == 10
+def test_warmer_keeps_a_partial_batch_when_at_least_half_is_usable(db, db_path):
+    batch = BatchRecorder(2)  # 2 of 4 usable = half: good enough
+    warmer = run_warmer(db_path, batch)
+    assert len(batch.requests) == 1
+    assert warmer.stored == 2
 
 
-def test_warmer_retries_past_failures_to_reach_target(db, db_path):
-    calls = []
-    lock = threading.Lock()
+def test_warmer_asks_once_more_for_only_the_missing_subjects(db, db_path):
+    batch = BatchRecorder(1, 3)  # 1 of 4 usable: less than half, so one more request
+    warmer = run_warmer(db_path, batch)
 
-    def flaky(subject):
-        with lock:
-            calls.append(subject)
-            fail = len(calls) % 2 == 1  # every other call fails
-        if fail:
-            raise llm.LLMError("overloaded")
-        return fake_generate(subject)
-
-    warmer = PromptWarmer(db_path, SUBJECTS, target=3, generate=flaky, workers=1)
-    warmer.start()
-    warmer.join(timeout=5)
-
-    assert len(stored_rows(db)) == 3
-    assert len(calls) == 6
+    assert len(batch.requests) == 2
+    first, second = batch.requests
+    assert len(second) == 3 and set(second) == set(first) - {first[0]}
+    assert warmer.stored == 4
+    assert len({subject for subject, _, _ in stored_rows(db)}) == 4
 
 
-def test_warmer_gives_up_after_max_attempts_when_provider_is_down(db, db_path):
-    def down(subject):
-        raise llm.LLMError("overloaded")
+def test_warmer_retries_once_after_a_failed_request(db, db_path):
+    batch = BatchRecorder(llm.LLMError("overloaded"), 4)
+    warmer = run_warmer(db_path, batch)
+    assert len(batch.requests) == 2
+    assert warmer.stored == 4
 
-    warmer = PromptWarmer(db_path, SUBJECTS, target=5, generate=down)
-    warmer.start()
-    warmer.join(timeout=5)
 
+def test_warmer_never_makes_more_than_two_requests(db, db_path):
+    batch = BatchRecorder(llm.LLMError("down"), llm.LLMError("down"), 4)
+    warmer = run_warmer(db_path, batch)
+    assert len(batch.requests) == prompt_store.MAX_WARM_UP_REQUESTS == 2
+    assert warmer.stored == 0
     assert stored_rows(db) == []
-    assert warmer.attempts == 5 * prompt_store.MAX_ATTEMPTS_PER_PROMPT
 
 
 def test_warmer_survives_unexpected_errors(db, db_path):
-    def broken(subject):
-        raise ValueError("bug")
+    batch = BatchRecorder(ValueError("bug"), 4)
+    warmer = run_warmer(db_path, batch)
+    assert warmer.stored == 4
+    assert not warmer._thread.is_alive()
 
-    warmer = PromptWarmer(db_path, SUBJECTS, target=2, generate=broken)
-    warmer.start()
-    warmer.join(timeout=5)
-    assert not any(t.is_alive() for t in warmer._threads)
+
+def test_warmer_caps_target_at_one_prompt_per_subject(db, db_path):
+    batch = BatchRecorder(10)
+    warmer = run_warmer(db_path, batch, target=10)
+    assert len(batch.requests[0]) == len(SUBJECTS)
+    assert warmer.stored == len(SUBJECTS)
 
 
 def test_warmer_does_not_save_after_stop(db, db_path):
     release = threading.Event()
 
-    def slow(subject):
+    def slow(subjects):
         release.wait(5)
-        return fake_generate(subject)
+        return fake_batch(subjects)
 
-    warmer = PromptWarmer(db_path, SUBJECTS, target=3, generate=slow)
+    warmer = PromptWarmer(db_path, SUBJECTS, target=3, generate_batch=slow)
     warmer.start()
     warmer.stop()
     release.set()
@@ -214,9 +232,11 @@ def test_warmer_does_not_save_after_stop(db, db_path):
 
 @pytest.mark.parametrize("subjects, target", [([], 10), (SUBJECTS, 0)])
 def test_warmer_does_nothing_without_subjects_or_target(db_path, subjects, target):
-    warmer = PromptWarmer(db_path, subjects, target=target, generate=fake_generate)
+    batch = BatchRecorder()
+    warmer = PromptWarmer(db_path, subjects, target=target, generate_batch=batch)
     warmer.start()
-    assert warmer._threads == []
+    assert warmer._thread is None
+    assert batch.requests == []
 
 
 # --- Startup integration ----------------------------------------------------
@@ -227,11 +247,14 @@ def test_startup_pre_generates_prompts_in_background(db_path, static_dir, tmp_pa
     subjects_path.write_text('["Oceans", "Cities", "Forests", "Deserts"]')
     release = threading.Event()
 
-    def gated(subject):
-        release.wait(5)
-        return fake_generate(subject)
+    requests = []
 
-    monkeypatch.setattr(prompts, "generate_for_subject", gated)
+    def gated(subjects):
+        requests.append(subjects)
+        release.wait(5)
+        return fake_batch(subjects)
+
+    monkeypatch.setattr(prompts, "generate_batch", gated)
     app = create_app(db_path=db_path, static_dir=static_dir, subjects_path=subjects_path, warm_up_count=4)
 
     with TestClient(app) as client:
@@ -241,6 +264,7 @@ def test_startup_pre_generates_prompts_in_background(db_path, static_dir, tmp_pa
         release.set()
         app.state.prompt_warmer.join(timeout=5)
         assert client.get("/api/health").json()["stored_prompts"] == 4
+        assert len(requests) == 1  # all four from one request
 
         # The pre-generated prompts now back up a failing LLM.
         def down(subject):

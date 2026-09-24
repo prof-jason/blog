@@ -1,8 +1,10 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from app import llm
+from app import llm, prompts
+from app.prompt_store import StoredPrompt
 from app.prompts import GeneratedPrompt
 
 
@@ -130,3 +132,86 @@ def test_extract_json(content, expected):
 def test_retry_dependency_is_installed():
     # LiteLLM's num_retries needs tenacity; without it every retryable error fails outright.
     import tenacity  # noqa: F401
+
+
+# --- Batch generation (startup warm-up) -------------------------------------
+
+
+def test_structured_completion_passes_per_call_options(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response('{"prompt": "P", "example": "E"}')
+
+    monkeypatch.setattr(llm, "completion", fake_completion)
+    llm.structured_completion([], GeneratedPrompt)
+    assert captured["timeout"] == llm.TIMEOUT_SECONDS
+    assert "max_tokens" not in captured
+
+    llm.structured_completion([], GeneratedPrompt, max_tokens=123, timeout=9)
+    assert (captured["max_tokens"], captured["timeout"]) == (123, 9)
+
+
+def test_structured_completion_parse_attempts_1_makes_one_request(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm, "completion", lambda **_: calls.append(1) or _fake_response("garbage"))
+    with pytest.raises(llm.UnusableOutputError):
+        llm.structured_completion([], GeneratedPrompt, parse_attempts=1)
+    assert len(calls) == 1
+
+
+def _batch_json(*entries):
+    return json.dumps({"prompts": [dict(zip(("subject", "prompt", "example"), e)) for e in entries]})
+
+
+def test_generate_batch_asks_for_every_subject_in_one_request(monkeypatch):
+    captured = []
+
+    def fake_completion(**kwargs):
+        captured.append(kwargs)
+        return _fake_response(_batch_json(("Oceans", "P1", "E1"), ("Cities", "P2", "E2")))
+
+    monkeypatch.setattr(llm, "completion", fake_completion)
+    result = prompts.generate_batch(["Oceans", "Cities"])
+
+    assert len(captured) == 1
+    user_message = captured[0]["messages"][1]["content"]
+    assert "- Oceans" in user_message and "- Cities" in user_message
+    assert captured[0]["max_tokens"] == prompts.BATCH_MAX_TOKENS
+    assert captured[0]["timeout"] == prompts.BATCH_TIMEOUT_SECONDS
+    assert captured[0]["response_format"] is prompts.PromptBatch
+    assert result == [
+        StoredPrompt(subject="Oceans", prompt="P1", example="E1"),
+        StoredPrompt(subject="Cities", prompt="P2", example="E2"),
+    ]
+
+
+def test_generate_batch_keeps_only_usable_entries(monkeypatch):
+    reply = _batch_json(
+        ("oceans ", " P1 ", " E1 "),  # case/whitespace differences map to the requested subject
+        ("Volcanoes", "P", "E"),  # not asked for
+        ("Cities", "", "E"),  # blank prompt
+        ("Forests", "P", "   "),  # blank example
+        ("Oceans", "P again", "E again"),  # duplicate subject: first one wins
+    )  # ...and no entry at all for Deserts
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response(reply))
+
+    result = prompts.generate_batch(["Oceans", "Cities", "Forests", "Deserts"])
+
+    assert result == [StoredPrompt(subject="Oceans", prompt="P1", example="E1")]
+
+
+def test_generate_batch_tolerates_an_entry_with_missing_fields(monkeypatch):
+    reply = '```json\n{"prompts": [{"subject": "Oceans", "prompt": "P1"}, ' \
+        '{"subject": "Cities", "prompt": "P2", "example": "E2"}]}\n```'
+    monkeypatch.setattr(llm, "completion", lambda **_: _fake_response(reply))
+    assert prompts.generate_batch(["Oceans", "Cities"]) == [StoredPrompt(subject="Cities", prompt="P2", example="E2")]
+
+
+def test_generate_batch_makes_one_request_even_for_unusable_output(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm, "completion", lambda **_: calls.append(1) or _fake_response("Sorry!"))
+    with pytest.raises(llm.LLMError):
+        prompts.generate_batch(["Oceans"])
+    assert len(calls) == 1  # the warmer, not the wrapper, decides whether to spend another

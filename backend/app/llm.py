@@ -45,7 +45,7 @@ def extract_json(content: str | None) -> str:
     return text[start : end + 1] if 0 <= start < end else text
 
 
-def _call(messages: list[dict[str, str]], response_model: type[T]) -> T:
+def _call(messages: list[dict[str, str]], response_model: type[T], **options) -> T:
     try:
         response = completion(
             model=MODEL,
@@ -53,9 +53,9 @@ def _call(messages: list[dict[str, str]], response_model: type[T]) -> T:
             response_format=response_model,
             reasoning_effort="low",
             extra_body=EXTRA_BODY,
-            timeout=TIMEOUT_SECONDS,
             num_retries=NUM_RETRIES,
             retry_strategy=RETRY_STRATEGY,
+            **options,
         )
         content = response.choices[0].message.content
     except Exception as exc:  # litellm raises many provider-specific types
@@ -67,13 +67,27 @@ def _call(messages: list[dict[str, str]], response_model: type[T]) -> T:
         raise UnusableOutputError(f"Response didn't match the schema: {exc}") from exc
 
 
-def structured_completion(messages: list[dict[str, str]], response_model: type[T]) -> T:
-    for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
+def structured_completion(
+    messages: list[dict[str, str]],
+    response_model: type[T],
+    *,
+    parse_attempts: int | None = None,
+    max_tokens: int | None = None,
+    timeout: float = TIMEOUT_SECONDS,
+) -> T:
+    """Call the model and parse its reply into `response_model`.
+
+    `parse_attempts` (default MAX_PARSE_ATTEMPTS) is how many requests to spend on unusable output;
+    callers that manage their own retries pass 1.
+    """
+    attempts = MAX_PARSE_ATTEMPTS if parse_attempts is None else parse_attempts
+    options = {"timeout": timeout} | ({"max_tokens": max_tokens} if max_tokens else {})
+    for attempt in range(1, attempts + 1):
         try:
-            return _call(messages, response_model)
+            return _call(messages, response_model, **options)
         except UnusableOutputError as exc:
             # API errors were already retried by litellm; only bad output gets another try here.
-            if attempt == MAX_PARSE_ATTEMPTS:
+            if attempt == attempts:
                 raise
             logger.warning("Unusable LLM output (attempt %d), retrying: %s", attempt, exc)
     raise AssertionError("unreachable")
