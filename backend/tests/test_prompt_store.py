@@ -55,6 +55,20 @@ def test_load_subjects(tmp_path):
     assert load_subjects(tmp_path / "missing.json") == []
 
 
+@pytest.mark.parametrize(
+    "environ, expected",
+    [
+        ({}, 1),  # development default
+        ({"APP_ENV": "development"}, 1),
+        ({"APP_ENV": "production"}, 10),
+        ({"APP_ENV": "production", "PROMPT_WARM_UP_COUNT": "3"}, 3),
+        ({"PROMPT_WARM_UP_COUNT": "0"}, 0),
+    ],
+)
+def test_warm_up_count_defaults(environ, expected):
+    assert config.warm_up_count(environ) == expected
+
+
 def test_shared_subjects_file_is_readable():
     subjects = load_subjects(config.SUBJECTS_PATH)
     assert len(subjects) >= 10
