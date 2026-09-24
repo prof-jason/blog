@@ -1,9 +1,11 @@
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app import llm
+from app import llm, prompt_store
+from app.db import Db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
@@ -28,20 +30,31 @@ class GeneratedPrompt(BaseModel):
 
 class PromptResponse(GeneratedPrompt):
     subject: str
+    # "stored" means live generation failed and a pre-generated prompt was served instead.
+    source: Literal["live", "stored"]
 
 
-@router.post("")
-def generate_prompt(body: PromptRequest) -> PromptResponse:
-    subject = body.subject.strip()
-    if not subject:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Subject must not be blank")
+def generate_for_subject(subject: str) -> GeneratedPrompt:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Subject: {subject}"},
     ]
+    result = llm.structured_completion(messages, GeneratedPrompt)
+    return GeneratedPrompt(prompt=result.prompt.strip(), example=result.example.strip())
+
+
+@router.post("")
+def generate_prompt(body: PromptRequest, db: Db) -> PromptResponse:
+    subject = body.subject.strip()
+    if not subject:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Subject must not be blank")
     try:
-        result = llm.structured_completion(messages, GeneratedPrompt)
+        result = generate_for_subject(subject)
     except llm.LLMError:
         logger.exception("Prompt generation failed for subject %r", subject)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't generate a prompt right now. Please try again.")
-    return PromptResponse(subject=subject, prompt=result.prompt.strip(), example=result.example.strip())
+        stored = prompt_store.find_fallback(db, subject)
+        if stored is None:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't generate a prompt right now. Please try again.")
+        logger.info("Serving stored prompt for %r (requested %r)", stored.subject, subject)
+        return PromptResponse(**stored.model_dump(), source="stored")
+    return PromptResponse(subject=subject, **result.model_dump(), source="live")

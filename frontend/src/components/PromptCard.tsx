@@ -26,6 +26,8 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
   const flipped = face === "example";
   const ready = generation.status === "ready" ? generation : null;
   const promptShown = face !== "subject" && ready !== null;
+  // A stored fallback prompt may be for a different subject than the one rolled.
+  const shownSubject = ready?.subject ?? subject;
 
   return (
     <button
@@ -39,7 +41,7 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
       <span className={`card-inner${flipped ? " is-flipped" : ""}`}>
         <span className="card-face card-front" inert={flipped} aria-hidden={flipped}>
           <span className="card-label">Subject</span>
-          <span className="card-subject">{subject}</span>
+          <span className="card-subject">{shownSubject}</span>
           {generation.status === "loading" && (
             <span className="card-status is-loading" data-testid="card-loading">
               <span className="card-dots" aria-hidden="true">
@@ -60,11 +62,14 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
             <span className="card-prompt-text" data-testid="prompt-text">
               {promptShown ? ready.prompt : ""}
             </span>
+            {promptShown && ready.source === "stored" && (
+              <span className="card-note">Saved prompt: the live generator is busy right now.</span>
+            )}
           </span>
         </span>
         <span className="card-face card-back" inert={!flipped} aria-hidden={!flipped}>
           <span className="card-label">Example response</span>
-          <span className="card-subject card-subject--small">{subject}</span>
+          <span className="card-subject card-subject--small">{shownSubject}</span>
           <span className="card-example" data-testid="example-text">
             {flipped && ready ? ready.example : ""}
           </span>

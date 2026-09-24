@@ -124,6 +124,44 @@ describe("PromptStudio", () => {
     expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
   });
 
+  it("labels a stored prompt served for the same subject", async () => {
+    render(<PromptStudio subjects={FIXTURES} />);
+    fireEvent.click(card());
+    await pending[0].resolve(200, { subject: "Oceans", ...oceans, source: "stored" });
+
+    expect(subjectOnCard()).toBe("Oceans");
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
+    expect(screen.getByText(/saved prompt/i)).toBeInTheDocument();
+  });
+
+  it("switches the card to the subject of a stored prompt for a different subject", async () => {
+    // rng 0 would roll index 1 ("Cities") from index 0, so it proves the index moved to Cities.
+    render(<PromptStudio subjects={FIXTURES} rng={() => 0} />);
+    fireEvent.click(card());
+    await pending[0].resolve(200, {
+      subject: "Cities",
+      prompt: "Write about a subway.",
+      example: "The train screeched.",
+      source: "stored",
+    });
+
+    expect(subjectOnCard()).toBe("Cities");
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about a subway.");
+    fireEvent.click(card());
+    expect(card().querySelector(".card-back .card-subject")).toHaveTextContent("Cities");
+    expect(screen.getByTestId("example-text")).toHaveTextContent("The train screeched.");
+
+    rollAndSettle();
+    expect(subjectOnCard()).toBe("Oceans"); // not Cities again
+  });
+
+  it("does not label live prompts as saved", async () => {
+    render(<PromptStudio subjects={FIXTURES} />);
+    fireEvent.click(card());
+    await pending[0].resolve(200, { subject: "Oceans", ...oceans, source: "live" });
+    expect(screen.queryByText(/saved prompt/i)).not.toBeInTheDocument();
+  });
+
   it("rolling the die picks a different subject and resets the card", async () => {
     // rng 0.99 → offset 1 of the 2 non-current slots → index 2 ("Forests").
     render(<PromptStudio subjects={FIXTURES} rng={() => 0.99} />);

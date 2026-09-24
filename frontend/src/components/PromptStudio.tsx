@@ -30,6 +30,8 @@ export default function PromptStudio({ subjects = SUBJECTS, rng = Math.random }:
     try {
       const result = await fetchPrompt(subject, controller.signal);
       if (controller.signal.aborted) return;
+      const served = subjects.indexOf(result.subject);
+      if (served !== -1) setIndex(served); // keep the die from re-rolling a fallback's subject
       setGeneration({ status: "ready", ...result });
       setFace("prompt");
       setAnnouncement(`Prompt: ${result.prompt}`);

@@ -7,12 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 
-from app.db import get_db
+from app.db import Db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_COOKIE = "session"
-Db = Annotated[sqlite3.Connection, Depends(get_db)]
 
 
 class Credentials(BaseModel):

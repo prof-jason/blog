@@ -25,6 +25,7 @@ def test_generates_prompt_for_subject(client, fake_llm):
         "subject": "The Ocean",
         "prompt": "Write about the tide.",
         "example": "The tide came in slowly.",
+        "source": "live",
     }
     messages, model = fake_llm[0]
     assert model is GeneratedPrompt
