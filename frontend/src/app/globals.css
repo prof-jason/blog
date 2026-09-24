@@ -10,7 +10,9 @@
   --accent: #c2410c;
   --die: #fffdf7;
   --pip: #1d2740;
-  --shadow: 0 1px 2px rgb(29 39 64 / 0.08), 0 12px 32px -12px rgb(29 39 64 / 0.28);
+  --card-back: #f9f5ea;
+  --card-edge: 0 1px 2px rgb(29 39 64 / 0.12), 0 0 0 1px rgb(29 39 64 / 0.05);
+  --floor-shadow: rgb(29 39 64 / 0.3);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,7 +26,9 @@
     --accent: #fb923c;
     --die: #eef0f5;
     --pip: #161b27;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+    --card-back: #1f2535;
+    --card-edge: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.04);
+    --floor-shadow: rgb(0 0 0 / 0.55);
   }
 }
 
@@ -95,7 +99,6 @@ body {
   width: 100%;
   text-align: left;
   cursor: pointer;
-  perspective: 1400px;
   border-radius: 0.75rem;
 }
 
@@ -104,19 +107,39 @@ body {
   outline-offset: 6px;
 }
 
+/* About 2x the card's width: real depth as it turns, without the near edge ballooning. */
+.card-stage {
+  position: relative;
+  display: block;
+  perspective: 1600px;
+  isolation: isolate;
+}
+
+/* Shadow on the "table" under the card; it falls away while the card is lifted (useCardFlip). */
+.card-shadow {
+  position: absolute;
+  inset: 12% 5% -3%;
+  z-index: -1;
+  border-radius: 1rem;
+  background: var(--floor-shadow);
+  filter: blur(18px);
+}
+
+/* Resting transforms match the first/last flip keyframes in useCardFlip, so nothing jumps. */
 .card-inner {
   position: relative;
   display: grid;
   min-height: 22rem;
   transform-style: preserve-3d;
-  transition: transform 0.7s cubic-bezier(0.3, 0.7, 0.2, 1);
+  transform: translateZ(0px) rotateZ(0deg) rotateY(0deg);
 }
 
 .card-inner.is-flipped {
-  transform: rotateY(180deg);
+  transform: translateZ(0px) rotateZ(0deg) rotateY(180deg);
 }
 
 .card-face {
+  position: relative;
   grid-area: 1 / 1;
   display: flex;
   flex-direction: column;
@@ -124,18 +147,35 @@ body {
   padding: 2rem 1.75rem 2rem 3.25rem;
   border-radius: 0.75rem;
   background-color: var(--card);
-  /* Ruled index card: a red margin line plus faint blue rules. */
+  box-shadow: var(--card-edge);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* Front: a ruled index card, with a red margin line and faint blue rules. */
+.card-front {
   background-image:
     linear-gradient(to right, transparent 2.25rem, var(--margin) 2.25rem, var(--margin) calc(2.25rem + 1.5px), transparent calc(2.25rem + 1.5px)),
     repeating-linear-gradient(to bottom, transparent 0, transparent calc(1.9rem - 1px), var(--rule) calc(1.9rem - 1px), var(--rule) 1.9rem);
   background-position: 0 0, 0 4.5rem;
   background-repeat: no-repeat, repeat;
-  box-shadow: var(--shadow);
-  backface-visibility: hidden;
 }
 
+/* Back: blank, like the reverse of a real index card. */
 .card-back {
   transform: rotateY(180deg);
+  padding-left: 1.75rem;
+  background-color: var(--card-back);
+}
+
+/* Darkens each face as it turns edge-on to the light (animated by useCardFlip). */
+.card-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(100deg, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.2));
+  opacity: 0;
+  pointer-events: none;
 }
 
 .card-subject {
@@ -285,7 +325,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card-inner,
   .card-prompt,
   .die {
     transition: none;

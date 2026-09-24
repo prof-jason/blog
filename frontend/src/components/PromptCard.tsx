@@ -1,5 +1,6 @@
 import type { GeneratedPrompt } from "@/lib/api";
 import type { CardFace } from "@/lib/cardFace";
+import { useCardFlip } from "@/lib/useCardFlip";
 
 export type Generation =
   | { status: "idle" }
@@ -28,6 +29,7 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
   const promptShown = face !== "subject" && ready !== null;
   // A stored fallback prompt may be for a different subject than the one rolled.
   const shownSubject = ready?.subject ?? subject;
+  const { innerRef, shadowRef, frontShadeRef, backShadeRef } = useCardFlip(flipped);
 
   return (
     <button
@@ -38,40 +40,50 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
       aria-busy={generation.status === "loading"}
       aria-describedby="card-hint"
     >
-      <span className={`card-inner${flipped ? " is-flipped" : ""}`}>
-        <span className="card-face card-front" inert={flipped} aria-hidden={flipped}>
-          <span className="card-label">Subject</span>
-          <span className="card-subject">{shownSubject}</span>
-          {generation.status === "loading" && (
-            <span className="card-status is-loading" data-testid="card-loading">
-              <span className="card-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
+      <span className="card-stage">
+        <span ref={shadowRef} className="card-shadow" aria-hidden="true" />
+        <span ref={innerRef} className={`card-inner${flipped ? " is-flipped" : ""}`}>
+          <span className="card-face card-front" inert={flipped} aria-hidden={flipped}>
+            <span ref={frontShadeRef} className="card-shade" aria-hidden="true" />
+            <span className="card-label">Subject</span>
+            <span className="card-subject">{shownSubject}</span>
+            {generation.status === "loading" && (
+              <span className="card-status is-loading" data-testid="card-loading">
+                <span className="card-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                Writing your prompt…
               </span>
-              Writing your prompt…
-            </span>
-          )}
-          {generation.status === "error" && face === "subject" && (
-            <span className="card-status is-error" role="alert">
-              {generation.message}
-            </span>
-          )}
-          <span className={`card-prompt${promptShown ? " is-shown" : ""}`} aria-hidden={!promptShown}>
-            <span className="card-label">Your prompt</span>
-            <span className="card-prompt-text" data-testid="prompt-text">
-              {promptShown ? ready.prompt : ""}
-            </span>
-            {promptShown && ready.source === "stored" && (
-              <span className="card-note">Saved prompt: the live generator is busy right now.</span>
             )}
+            {generation.status === "error" && face === "subject" && (
+              <span className="card-status is-error" role="alert">
+                {generation.message}
+              </span>
+            )}
+            <span
+              className={`card-prompt${promptShown ? " is-shown" : ""}`}
+              aria-hidden={!promptShown}
+            >
+              <span className="card-label">Your prompt</span>
+              <span className="card-prompt-text" data-testid="prompt-text">
+                {promptShown ? ready.prompt : ""}
+              </span>
+              {promptShown && ready.source === "stored" && (
+                <span className="card-note">
+                  Saved prompt: the live generator is busy right now.
+                </span>
+              )}
+            </span>
           </span>
-        </span>
-        <span className="card-face card-back" inert={!flipped} aria-hidden={!flipped}>
-          <span className="card-label">Example response</span>
-          <span className="card-subject card-subject--small">{shownSubject}</span>
-          <span className="card-example" data-testid="example-text">
-            {flipped && ready ? ready.example : ""}
+          <span className="card-face card-back" inert={!flipped} aria-hidden={!flipped}>
+            <span ref={backShadeRef} className="card-shade" aria-hidden="true" />
+            <span className="card-label">Example response</span>
+            <span className="card-subject card-subject--small">{shownSubject}</span>
+            <span className="card-example" data-testid="example-text">
+              {ready?.example ?? ""}
+            </span>
           </span>
         </span>
       </span>
