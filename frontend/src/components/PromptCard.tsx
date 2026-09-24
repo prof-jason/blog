@@ -1,15 +1,12 @@
-import type { GeneratedPrompt } from "@/lib/api";
+import type { CardPrompt } from "@/lib/api";
 import { useCardFlip } from "@/lib/useCardFlip";
 
 export type Generation =
   | { status: "loading" }
-  // `fallback`: live generation failed and a stored prompt was served instead.
-  | ({ status: "ready"; fallback: boolean } & GeneratedPrompt)
+  | ({ status: "ready" } & CardPrompt)
   | { status: "error"; message: string };
 
 type Props = {
-  /** null until the first subject has been chosen. */
-  subject: string | null;
   flipped: boolean;
   generation: Generation;
   onClick: () => void;
@@ -17,15 +14,14 @@ type Props = {
 
 function hintFor(flipped: boolean, generation: Generation): string {
   if (flipped) return "Tap to flip back to the prompt";
-  if (generation.status === "loading") return "Writing your prompt…";
+  if (generation.status === "loading") return "Getting your prompt…";
   if (generation.status === "error") return "Tap the card to try again";
   return "Tap the card to see an example";
 }
 
-export default function PromptCard({ subject, flipped, generation, onClick }: Props) {
+export default function PromptCard({ flipped, generation, onClick }: Props) {
   const ready = generation.status === "ready" ? generation : null;
-  // A stored fallback prompt may be for a different subject than the one rolled.
-  const shownSubject = ready?.subject ?? subject;
+  const shownSubject = ready?.subject ?? null;
   const { innerRef, shadowRef, frontShadeRef, backShadeRef } = useCardFlip(flipped);
 
   return (
@@ -55,7 +51,7 @@ export default function PromptCard({ subject, flipped, generation, onClick }: Pr
                     <span />
                     <span />
                   </span>
-                  Writing your prompt…
+                  Getting your prompt…
                 </span>
               )}
               {generation.status === "error" && (
@@ -66,11 +62,6 @@ export default function PromptCard({ subject, flipped, generation, onClick }: Pr
               {ready && (
                 <span className="card-prompt-text" data-testid="prompt-text">
                   {ready.prompt}
-                </span>
-              )}
-              {ready?.fallback && (
-                <span className="card-note">
-                  Saved prompt: the live generator is busy right now.
                 </span>
               )}
             </span>

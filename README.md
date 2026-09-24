@@ -16,19 +16,23 @@ looks like.
 Prompts and examples are written by an AI and pitched at grades 4–6: everyday words, short
 sentences, topics kids that age know (school, friends, family, pets, games, nature, make-believe),
 and 60–100-word examples in a kid's own voice. There are 30 subjects, listed in
-`frontend/src/data/subjects.json`.
+`backend/subjects.json`.
 
-### When the AI is slow or unavailable
+### The prompt pool (why rolls are instant and quota-safe)
 
 The app uses OpenRouter's free models, which are sometimes busy and are limited to a number of
-requests per day. To keep a prompt on the card anyway:
+requests **per day per account**. So rolls never wait on the AI:
 
-- At startup, the app pre-generates **10 prompts in a single request** and saves them.
-- The page opens on one of those saved prompts, so the first card appears instantly and costs no
-  request.
-- If a new prompt fails or takes longer than **20 seconds**, the card shows a saved prompt instead
-  (for the same subject if possible), labeled "Saved prompt". It shows an error only if nothing is
-  saved yet, and clicking the card then tries again.
+- Prompts are written ahead of time into a **pool**, 10 at a time in a **single request**. The pool
+  is filled at startup and refilled in the background whenever fewer than 5 unseen prompts remain,
+  so it takes about 1 request per 10 rolls however many students are rolling.
+- Opening the page and rolling the die both take the next card from the pool: a different subject
+  from the one showing, least-shown prompts first. That's instant and costs no request.
+- All AI requests share a **daily budget** (default 40, under the free tier's limit). Once it's
+  spent, rolls keep working by re-showing saved prompts until it frees up.
+- Only right after startup, before the first 10 prompts arrive, does the card show "Getting your
+  prompt…" (it waits and retries automatically). If no prompts can be made at all, the card says so
+  and a click tries again.
 
 ## Running the app
 
@@ -36,7 +40,9 @@ You need Docker and a `.env` file in the project root:
 
 ```bash
 OPENROUTER_API_KEY=...          # required
-PROMPT_WARM_UP_COUNT=10         # optional: prompts to pre-generate at startup (default 10)
+LLM_DAILY_REQUEST_LIMIT=40      # optional: max AI requests per 24 hours (raise it if the account has credits)
+PROMPT_BATCH_SIZE=10            # optional: prompts written per request
+PROMPT_REFILL_BELOW=5           # optional: refill when fewer unseen prompts than this remain
 ```
 
 ```bash
@@ -44,8 +50,13 @@ scripts/start-mac.sh      # or start-linux.sh / start-windows.ps1 → http://loc
 scripts/stop-mac.sh       # or stop-linux.sh / stop-windows.ps1
 ```
 
-Each start uses 1 request (at most 2) to pre-generate the saved prompts. The database is recreated
-on every start, so saved prompts and accounts don't persist.
+By default only this computer can open the app. To let other devices on the network (for example
+students' laptops) reach it, start it with `BLOG_HOST=0.0.0.0 scripts/start-mac.sh` (on Windows,
+set `$env:BLOG_HOST = "0.0.0.0"` first). The container restarts automatically if it stops, runs as
+a non-root user, and reports its health to Docker.
+
+Each start uses 1 request (at most 2) to fill the pool. The database is recreated on every start,
+so saved prompts and accounts don't persist.
 
 ## How it's built
 
@@ -57,8 +68,9 @@ on every start, so saved prompts and accounts don't persist.
 - **Backend** (`backend/`): FastAPI managed with uv. It serves the API and the exported frontend on
   one origin.
   - `app/llm.py`: a generic structured-output LLM wrapper (LiteLLM → OpenRouter `openrouter/free`).
-  - `app/prompts.py`: the grade 4–6 prompt instructions and the prompt endpoints.
-  - `app/prompt_store.py`: startup pre-generation and saved-prompt lookup.
+  - `app/prompts.py`: the grade 4–6 prompt instructions, batch generation and `/api/prompts/next`.
+  - `app/prompt_store.py`: the prompt pool (serving, background refills).
+  - `app/budget.py`: the daily cap on AI requests.
   - `app/auth.py`: sign-up / login (not used by the UI yet).
   - SQLite tables `users`, `sessions` and `stored_prompts`.
 - **Docker**: a multi-stage `Dockerfile`. Node builds the frontend, then Python serves everything.
@@ -67,9 +79,8 @@ on every start, so saved prompts and accounts don't persist.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/prompts/stored` | A random saved prompt (404 if none yet). Used for the opening card. |
-| `POST /api/prompts` `{subject}` | `{subject, prompt, example, source}`. `source` is `live`, or `stored` for a fallback (which may be for a different subject). |
-| `GET /api/health` | Status and the number of saved prompts. |
+| `GET /api/prompts/next?exclude=<subject>` | The next card from the pool, `{subject, prompt, example}`, for a subject other than `exclude`. Never calls the AI. `503` if the pool is empty: with `Retry-After` while prompts are being written, without it if none are coming. |
+| `GET /api/health` | Status, saved and unseen prompt counts, whether a refill is running, and requests left today. |
 | `POST /api/auth/signup`, `/login`, `/logout`, `GET /api/auth/me` | Cookie-session accounts (no UI yet). |
 
 ## Development

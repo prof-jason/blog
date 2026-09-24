@@ -25,6 +25,7 @@ CREATE TABLE stored_prompts (
     subject TEXT NOT NULL,
     prompt TEXT NOT NULL,
     example TEXT NOT NULL,
+    served_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """

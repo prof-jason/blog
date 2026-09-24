@@ -8,16 +8,19 @@ import os
 
 import pytest
 
+from app import prompts
+
 pytestmark = [
     pytest.mark.skipif(os.environ.get("RUN_LIVE_LLM") != "1", reason="set RUN_LIVE_LLM=1 to run"),
     pytest.mark.live_llm,
 ]
 
 
-def test_live_prompt_generation(client, openrouter_calls):
-    response = client.post("/api/prompts", json={"subject": "A Rainy Day"})
+def test_live_prompt_generation(openrouter_calls):
+    results = prompts.generate_batch(["A Rainy Day", "A Map"])
     assert len(openrouter_calls) == 1
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert len(body["prompt"]) > 20
-    assert len(body["example"].split()) > 30
+    assert results, "the batch came back with no usable prompts"
+    for prompt in results:
+        assert prompt.subject in {"A Rainy Day", "A Map"}
+        assert len(prompt.prompt) > 20
+        assert len(prompt.example.split()) > 30

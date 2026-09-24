@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app import auth, config, prompt_store, prompts
+from app.budget import RequestBudget
 from app.db import Db, init_db
 
 # Uvicorn only configures its own loggers; without this, INFO logs from app.* are dropped.
@@ -22,28 +23,39 @@ def create_app(
     db_path: Path = config.DATABASE_PATH,
     static_dir: Path = config.STATIC_DIR,
     subjects_path: Path = config.SUBJECTS_PATH,
-    warm_up_count: int = config.WARM_UP_COUNT,
+    batch_size: int = config.BATCH_SIZE,
+    refill_below: int = config.REFILL_BELOW,
+    daily_request_limit: int = config.DAILY_REQUEST_LIMIT,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_db(db_path)
-        warmer = prompt_store.PromptWarmer(
+        pool = prompt_store.PromptPool(
             db_path,
             prompt_store.load_subjects(subjects_path),
-            target=warm_up_count,
             generate_batch=prompts.generate_batch,
+            budget=RequestBudget(daily_request_limit),
+            batch_size=batch_size,
+            refill_below=refill_below,
         )
-        app.state.prompt_warmer = warmer
-        warmer.start()  # runs in the background; startup doesn't wait for the LLM
+        app.state.prompt_pool = pool
+        pool.start()  # fills the pool in the background; startup doesn't wait for the LLM
         yield
-        warmer.stop()
+        pool.stop()
 
     app = FastAPI(title="Writing Prompt Generator", lifespan=lifespan)
     app.state.db_path = db_path
 
     @app.get("/api/health")
-    def health(db: Db) -> dict[str, str | int]:
-        return {"status": "ok", "stored_prompts": prompt_store.count(db)}
+    def health(db: Db) -> dict[str, str | int | bool]:
+        pool: prompt_store.PromptPool = app.state.prompt_pool
+        return {
+            "status": "ok",
+            "stored_prompts": prompt_store.count(db),
+            "unserved_prompts": prompt_store.count_unserved(db),
+            "refilling": pool.refilling,
+            "requests_left_today": pool.budget.remaining(),
+        }
 
     app.include_router(auth.router)
     app.include_router(prompts.router)

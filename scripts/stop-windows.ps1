@@ -1,2 +1,7 @@
-docker rm -f blog-app 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) { Write-Host "App stopped." } else { Write-Host "App was not running." }
+# Check first rather than discarding "docker rm" errors (see start-windows.ps1).
+if (docker ps -aq --filter "name=^blog-app$") {
+    docker rm -f blog-app | Out-Null
+    Write-Host "App stopped."
+} else {
+    Write-Host "App was not running."
+}
