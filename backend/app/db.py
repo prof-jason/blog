@@ -1,8 +1,10 @@
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 SCHEMA = """
 CREATE TABLE users (
@@ -17,6 +19,14 @@ CREATE TABLE sessions (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE stored_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    example TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -24,7 +34,7 @@ def init_db(path: Path) -> None:
     """Create the database from scratch, discarding any previous file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
-    with connect(path) as conn:
+    with closing(connect(path)) as conn:
         conn.executescript(SCHEMA)
 
 
@@ -41,3 +51,6 @@ def get_db(request: Request) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+Db = Annotated[sqlite3.Connection, Depends(get_db)]

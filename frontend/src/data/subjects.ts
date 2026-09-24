@@ -1,32 +1,4 @@
-export const SUBJECTS: string[] = [
-  "A Forgotten Object",
-  "The Kitchen Table",
-  "Weather",
-  "A First Time",
-  "A Stranger",
-  "Home",
-  "A Letter to Your Future Self",
-  "An Argument",
-  "The View From a Window",
-  "A Lost Skill",
-  "Music",
-  "A Door",
-  "A Photograph",
-  "The Last Day of Summer",
-  "A Secret",
-  "An Unexpected Friendship",
-  "A Map",
-  "The Night Sky",
-  "A Family Recipe",
-  "A Mistake",
-  "An Empty Room",
-  "A Journey by Train",
-  "A Promise",
-  "The Ocean",
-  "A Garden",
-  "An Old Pair of Shoes",
-  "A Storm",
-  "A Hero",
-  "The Future",
-  "A Place You've Never Been",
-];
+// Shared with the backend, which pre-generates prompts for these subjects at startup.
+import subjects from "./subjects.json";
+
+export const SUBJECTS: string[] = subjects;

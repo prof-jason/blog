@@ -16,12 +16,31 @@ describe("fetchPrompt", () => {
     );
     const controller = new AbortController();
 
-    await expect(fetchPrompt("Home", controller.signal)).resolves.toEqual({ prompt: "P", example: "E" });
+    await expect(fetchPrompt("Home", controller.signal)).resolves.toEqual({
+      subject: "Home",
+      prompt: "P",
+      example: "E",
+      source: "live",
+    });
     expect(mock).toHaveBeenCalledWith("/api/prompts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subject: "Home" }),
       signal: controller.signal,
+    });
+  });
+
+  it("passes through a stored fallback for a different subject", async () => {
+    stubFetch(
+      new Response(JSON.stringify({ subject: "Music", prompt: "P", example: "E", source: "stored" }), {
+        status: 200,
+      }),
+    );
+    await expect(fetchPrompt("Home")).resolves.toEqual({
+      subject: "Music",
+      prompt: "P",
+      example: "E",
+      source: "stored",
     });
   });
 
