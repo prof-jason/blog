@@ -29,3 +29,15 @@ export async function fetchPrompt(subject: string, signal?: AbortSignal): Promis
     source: body.source === "stored" ? "stored" : "live",
   };
 }
+
+/** A random prompt pre-generated at startup, or null if none are stored yet (or on any error). */
+export async function fetchStoredPrompt(signal?: AbortSignal): Promise<GeneratedPrompt | null> {
+  try {
+    const response = await fetch("/api/prompts/stored", { signal });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return { subject: body.subject, prompt: body.prompt, example: body.example, source: "stored" };
+  } catch {
+    return null;
+  }
+}

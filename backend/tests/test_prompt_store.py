@@ -282,3 +282,30 @@ def test_stored_prompts_are_wiped_on_restart(db_path, static_dir, tmp_path):
 
     with TestClient(create_app(db_path=db_path, static_dir=static_dir, warm_up_count=0)) as client:
         assert client.get("/api/health").json()["stored_prompts"] == 0
+
+
+# --- Opening card ---------------------------------------------------------------
+
+
+def test_stored_endpoint_returns_a_random_stored_prompt(client, db_path):
+    for subject in SUBJECTS:
+        _store(db_path, subject, prompt=f"P {subject}", example=f"E {subject}")
+
+    seen = set()
+    for _ in range(30):
+        body = client.get("/api/prompts/stored").json()
+        assert body["source"] == "stored"
+        assert body["subject"] in SUBJECTS
+        assert (body["prompt"], body["example"]) == (f"P {body['subject']}", f"E {body['subject']}")
+        seen.add(body["subject"])
+    assert len(seen) > 1  # random, not always the same one
+
+
+def test_stored_endpoint_404s_before_warm_up_has_stored_anything(client):
+    assert client.get("/api/prompts/stored").status_code == 404
+
+
+def test_stored_endpoint_never_calls_the_llm(client, db_path, openrouter_calls):
+    _store(db_path, "Oceans")
+    client.get("/api/prompts/stored")
+    assert openrouter_calls == []

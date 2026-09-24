@@ -1,32 +1,29 @@
 import type { GeneratedPrompt } from "@/lib/api";
-import type { CardFace } from "@/lib/cardFace";
 import { useCardFlip } from "@/lib/useCardFlip";
 
 export type Generation =
-  | { status: "idle" }
   | { status: "loading" }
-  | ({ status: "ready" } & GeneratedPrompt)
+  // `fallback`: live generation failed and a stored prompt was served instead.
+  | ({ status: "ready"; fallback: boolean } & GeneratedPrompt)
   | { status: "error"; message: string };
 
 type Props = {
-  subject: string;
-  face: CardFace;
+  /** null until the first subject has been chosen. */
+  subject: string | null;
+  flipped: boolean;
   generation: Generation;
-  onAdvance: () => void;
+  onClick: () => void;
 };
 
-function hintFor(face: CardFace, generation: Generation): string {
-  if (face === "prompt") return "Tap again to flip for an example";
-  if (face === "example") return "Tap to flip back to the subject";
+function hintFor(flipped: boolean, generation: Generation): string {
+  if (flipped) return "Tap to flip back to the prompt";
   if (generation.status === "loading") return "Writing your prompt…";
   if (generation.status === "error") return "Tap the card to try again";
-  return "Tap the card to reveal your prompt";
+  return "Tap the card to see an example";
 }
 
-export default function PromptCard({ subject, face, generation, onAdvance }: Props) {
-  const flipped = face === "example";
+export default function PromptCard({ subject, flipped, generation, onClick }: Props) {
   const ready = generation.status === "ready" ? generation : null;
-  const promptShown = face !== "subject" && ready !== null;
   // A stored fallback prompt may be for a different subject than the one rolled.
   const shownSubject = ready?.subject ?? subject;
   const { innerRef, shadowRef, frontShadeRef, backShadeRef } = useCardFlip(flipped);
@@ -34,9 +31,9 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
   return (
     <button
       type="button"
-      onClick={onAdvance}
+      onClick={onClick}
       className="card-scene"
-      data-face={face}
+      data-face={flipped ? "back" : "front"}
       aria-busy={generation.status === "loading"}
       aria-describedby="card-hint"
     >
@@ -46,31 +43,32 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
           <span className="card-face card-front" inert={flipped} aria-hidden={flipped}>
             <span ref={frontShadeRef} className="card-shade" aria-hidden="true" />
             <span className="card-label">Subject</span>
-            <span className="card-subject">{shownSubject}</span>
-            {generation.status === "loading" && (
-              <span className="card-status is-loading" data-testid="card-loading">
-                <span className="card-dots" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                Writing your prompt…
-              </span>
-            )}
-            {generation.status === "error" && face === "subject" && (
-              <span className="card-status is-error" role="alert">
-                {generation.message}
-              </span>
-            )}
-            <span
-              className={`card-prompt${promptShown ? " is-shown" : ""}`}
-              aria-hidden={!promptShown}
-            >
+            <span className="card-subject" data-testid="subject-text">
+              {shownSubject ?? " "}
+            </span>
+            <span className="card-prompt">
               <span className="card-label">Your prompt</span>
-              <span className="card-prompt-text" data-testid="prompt-text">
-                {promptShown ? ready.prompt : ""}
-              </span>
-              {promptShown && ready.source === "stored" && (
+              {generation.status === "loading" && (
+                <span className="card-status is-loading" data-testid="card-loading">
+                  <span className="card-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  Writing your prompt…
+                </span>
+              )}
+              {generation.status === "error" && (
+                <span className="card-status is-error" role="alert">
+                  {generation.message}
+                </span>
+              )}
+              {ready && (
+                <span className="card-prompt-text" data-testid="prompt-text">
+                  {ready.prompt}
+                </span>
+              )}
+              {ready?.fallback && (
                 <span className="card-note">
                   Saved prompt: the live generator is busy right now.
                 </span>
@@ -88,7 +86,7 @@ export default function PromptCard({ subject, face, generation, onAdvance }: Pro
         </span>
       </span>
       <span id="card-hint" className="card-hint">
-        {hintFor(face, generation)}
+        {hintFor(flipped, generation)}
       </span>
     </button>
   );

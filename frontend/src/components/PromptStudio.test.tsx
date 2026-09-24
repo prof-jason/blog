@@ -8,32 +8,36 @@ import PromptStudio from "./PromptStudio";
 const FIXTURES = ["Oceans", "Cities", "Forests"];
 
 type Pending = {
-  subject: string;
+  url: string;
+  method: string;
+  subject?: string;
   signal: AbortSignal;
-  resolve: (status: number, body: unknown) => Promise<void>;
+  respond: (status: number, body: unknown) => Promise<void>;
 };
 
 let pending: Pending[];
-
-function jsonResponse(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 beforeEach(() => {
   vi.useFakeTimers();
   pending = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn((_url: string, init: RequestInit) => {
+    vi.fn((url: string, init: RequestInit = {}) => {
       return new Promise<Response>((resolveFetch) => {
         pending.push({
-          subject: JSON.parse(init.body as string).subject,
+          url,
+          method: init.method ?? "GET",
+          subject: init.body ? JSON.parse(init.body as string).subject : undefined,
           signal: init.signal as AbortSignal,
-          resolve: async (status, body) => {
-            await act(async () => resolveFetch(jsonResponse(status, body)));
+          respond: async (status, body) => {
+            await act(async () =>
+              resolveFetch(
+                new Response(JSON.stringify(body), {
+                  status,
+                  headers: { "Content-Type": "application/json" },
+                }),
+              ),
+            );
           },
         });
       });
@@ -49,153 +53,120 @@ afterEach(() => {
 const card = () =>
   within(screen.getByRole("region", { name: "Writing prompt card" })).getByRole("button");
 const die = () => screen.getByRole("button", { name: /roll the die/i });
-const subjectOnCard = () => card().querySelector(".card-front .card-subject")?.textContent;
+const subjectOnCard = () => screen.getByTestId("subject-text").textContent;
+const posts = () => pending.filter((p) => p.method === "POST");
+const lastPost = () => posts().at(-1)!;
 
-function rollAndSettle() {
+const tides = { prompt: "Write about tides.", example: "The tide came in slowly." };
+const subway = { prompt: "Write about a subway.", example: "The train screeched." };
+const moss = { prompt: "Write about moss.", example: "Moss covered everything." };
+
+/** Renders and settles the opening card from a stored prompt (or from live generation if `null`). */
+async function open(stored: { subject: string; prompt: string; example: string } | null, rng?: () => number) {
+  render(<PromptStudio subjects={FIXTURES} rng={rng} />);
+  expect(pending[0].url).toBe("/api/prompts/stored");
+  if (stored) {
+    await pending[0].respond(200, { ...stored, source: "stored" });
+  } else {
+    await pending[0].respond(404, { detail: "No stored prompts yet" });
+  }
+}
+
+function roll() {
   fireEvent.click(die());
   act(() => {
     vi.advanceTimersByTime(ROLL_DURATION_MS);
   });
 }
 
-const oceans = { prompt: "Write about tides.", example: "The tide came in slowly." };
-
-describe("PromptStudio", () => {
-  it("starts on the subject side without calling the API", () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-    expect(subjectOnCard()).toBe("Oceans");
-    expect(card()).toHaveAttribute("data-face", "subject");
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("generates a prompt for the subject on click, then flips to the example and back", async () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-
-    fireEvent.click(card());
-    expect(pending).toHaveLength(1);
-    expect(pending[0].subject).toBe("Oceans");
-    expect(fetch).toHaveBeenCalledWith("/api/prompts", expect.objectContaining({ method: "POST" }));
-    expect(screen.getByTestId("card-loading")).toBeInTheDocument();
-    expect(card()).toHaveAttribute("aria-busy", "true");
-
-    fireEvent.click(card()); // ignored while loading
-    expect(pending).toHaveLength(1);
-
-    await pending[0].resolve(200, { subject: "Oceans", ...oceans });
-    expect(card()).toHaveAttribute("data-face", "prompt");
-    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
-    expect(screen.queryByTestId("card-loading")).not.toBeInTheDocument();
-
-    fireEvent.click(card());
-    expect(card()).toHaveAttribute("data-face", "example");
-    expect(screen.getByTestId("example-text")).toHaveTextContent("The tide came in slowly.");
-    expect(card().querySelector(".card-inner")).toHaveClass("is-flipped");
-
-    fireEvent.click(card());
-    expect(card()).toHaveAttribute("data-face", "subject");
-    expect(screen.getByTestId("prompt-text")).toHaveTextContent("");
-  });
-
-  it("reuses the generated prompt when revisiting the same subject", async () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-    fireEvent.click(card());
-    await pending[0].resolve(200, oceans);
-    fireEvent.click(card());
-    fireEvent.click(card()); // back to subject
-
-    fireEvent.click(card());
-    expect(card()).toHaveAttribute("data-face", "prompt");
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows the server error and retries on the next click", async () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-    fireEvent.click(card());
-    await pending[0].resolve(502, { detail: "Couldn't generate a prompt right now. Please try again." });
-
-    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't generate a prompt right now.");
-    expect(card()).toHaveAttribute("data-face", "subject");
-    expect(screen.getByText("Tap the card to try again")).toBeInTheDocument();
-
-    fireEvent.click(card());
-    expect(pending).toHaveLength(2);
-    await pending[1].resolve(200, oceans);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
-  });
-
-  it("labels a stored prompt served for the same subject", async () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-    fireEvent.click(card());
-    await pending[0].resolve(200, { subject: "Oceans", ...oceans, source: "stored" });
-
-    expect(subjectOnCard()).toBe("Oceans");
-    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
-    expect(screen.getByText(/saved prompt/i)).toBeInTheDocument();
-  });
-
-  it("switches the card to the subject of a stored prompt for a different subject", async () => {
-    // rng 0 would roll index 1 ("Cities") from index 0, so it proves the index moved to Cities.
-    render(<PromptStudio subjects={FIXTURES} rng={() => 0} />);
-    fireEvent.click(card());
-    await pending[0].resolve(200, {
-      subject: "Cities",
-      prompt: "Write about a subway.",
-      example: "The train screeched.",
-      source: "stored",
-    });
+describe("opening card", () => {
+  it("shows a stored subject and prompt immediately, without generating one", async () => {
+    await open({ subject: "Cities", ...subway });
 
     expect(subjectOnCard()).toBe("Cities");
     expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about a subway.");
-    fireEvent.click(card());
-    expect(card().querySelector(".card-back .card-subject")).toHaveTextContent("Cities");
-    expect(screen.getByTestId("example-text")).toHaveTextContent("The train screeched.");
-
-    rollAndSettle();
-    expect(subjectOnCard()).toBe("Oceans"); // not Cities again
+    expect(card()).toHaveAttribute("data-face", "front");
+    expect(posts()).toHaveLength(0);
+    expect(screen.queryByText(/saved prompt/i)).not.toBeInTheDocument(); // not a fallback
+    expect(screen.getByText("Tap the card to see an example")).toBeInTheDocument();
   });
 
-  it("does not label live prompts as saved", async () => {
-    render(<PromptStudio subjects={FIXTURES} />);
-    fireEvent.click(card());
-    await pending[0].resolve(200, { subject: "Oceans", ...oceans, source: "live" });
-    expect(screen.queryByText(/saved prompt/i)).not.toBeInTheDocument();
-  });
+  it("generates a prompt live when nothing is stored yet", async () => {
+    await open(null, () => 0.99); // any-index pick → "Forests"
 
-  it("rolling the die picks a different subject and resets the card", async () => {
-    // rng 0.99 → offset 1 of the 2 non-current slots → index 2 ("Forests").
-    render(<PromptStudio subjects={FIXTURES} rng={() => 0.99} />);
-    fireEvent.click(card());
-    await pending[0].resolve(200, oceans);
-    fireEvent.click(card());
-    expect(card()).toHaveAttribute("data-face", "example");
-
-    rollAndSettle();
-
+    expect(lastPost().subject).toBe("Forests");
     expect(subjectOnCard()).toBe("Forests");
-    expect(card()).toHaveAttribute("data-face", "subject");
-    expect(screen.getByText("New subject: Forests")).toBeInTheDocument();
+    expect(screen.getByTestId("card-loading")).toBeInTheDocument();
+    expect(card()).toHaveAttribute("aria-busy", "true");
 
-    fireEvent.click(card());
-    expect(pending[1].subject).toBe("Forests");
-  });
-
-  it("aborts and ignores an in-flight request when the die is rolled", async () => {
-    render(<PromptStudio subjects={FIXTURES} rng={() => 0} />);
-    fireEvent.click(card());
-    rollAndSettle();
-
-    expect(pending[0].signal.aborted).toBe(true);
-    await pending[0].resolve(200, oceans);
-
-    expect(subjectOnCard()).toBe("Cities");
-    expect(card()).toHaveAttribute("data-face", "subject");
-    expect(screen.getByTestId("prompt-text")).toHaveTextContent("");
+    await lastPost().respond(200, { subject: "Forests", ...moss, source: "live" });
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about moss.");
     expect(screen.queryByTestId("card-loading")).not.toBeInTheDocument();
   });
+});
 
-  it("disables the die while rolling and only changes the subject once it settles", () => {
-    render(<PromptStudio subjects={FIXTURES} rng={() => 0} />);
+describe("two steps: prompt on the front, example on the back", () => {
+  it("flips to the example on click and back to the prompt on the next click", async () => {
+    await open({ subject: "Oceans", ...tides });
+
+    fireEvent.click(card());
+    expect(card()).toHaveAttribute("data-face", "back");
+    expect(card().querySelector(".card-inner")).toHaveClass("is-flipped");
+    expect(screen.getByTestId("example-text")).toHaveTextContent("The tide came in slowly.");
+    expect(screen.getByText("Tap to flip back to the prompt")).toBeInTheDocument();
+
+    fireEvent.click(card());
+    expect(card()).toHaveAttribute("data-face", "front");
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about tides.");
+
+    expect(posts()).toHaveLength(0); // flipping never costs a request
+  });
+
+  it("ignores card clicks while a prompt is loading", async () => {
+    await open(null, () => 0);
+    fireEvent.click(card());
+    fireEvent.click(card());
+    expect(card()).toHaveAttribute("data-face", "front");
+    expect(posts()).toHaveLength(1);
+  });
+});
+
+describe("rolling the die", () => {
+  it("shows a new subject with its prompt, back on the front of the card", async () => {
+    // rng 0.99 → offset 1 of the 2 non-current slots → index 2 ("Forests").
+    await open({ subject: "Oceans", ...tides }, () => 0.99);
+    fireEvent.click(card());
+    expect(card()).toHaveAttribute("data-face", "back");
+
+    roll();
+
+    expect(subjectOnCard()).toBe("Forests");
+    expect(card()).toHaveAttribute("data-face", "front");
+    expect(screen.getByTestId("card-loading")).toBeInTheDocument();
+    expect(lastPost().subject).toBe("Forests");
+    expect(screen.getByText("New subject: Forests")).toBeInTheDocument();
+
+    await lastPost().respond(200, { subject: "Forests", ...moss, source: "live" });
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about moss.");
+
+    fireEvent.click(card());
+    expect(screen.getByTestId("example-text")).toHaveTextContent("Moss covered everything.");
+  });
+
+  it("abandons a prompt that is still loading when rolled again", async () => {
+    await open({ subject: "Oceans", ...tides }, () => 0);
+    roll(); // → Cities
+    const first = lastPost();
+    roll(); // → Oceans
+
+    expect(first.signal.aborted).toBe(true);
+    await first.respond(200, { subject: "Cities", ...subway, source: "live" });
+    expect(subjectOnCard()).toBe("Oceans"); // the stale answer is ignored
+    expect(screen.getByTestId("card-loading")).toBeInTheDocument();
+  });
+
+  it("disables the die while it rolls and only changes the subject once it settles", async () => {
+    await open({ subject: "Oceans", ...tides }, () => 0);
     fireEvent.click(die());
 
     expect(die()).toBeDisabled();
@@ -210,16 +181,58 @@ describe("PromptStudio", () => {
     expect(subjectOnCard()).toBe("Cities");
   });
 
-  it("never repeats the same subject across consecutive rolls with real data", () => {
+  it("never repeats the same subject across consecutive rolls with real data", async () => {
     render(<PromptStudio />);
+    await pending[0].respond(200, { subject: SUBJECTS[0], ...tides, source: "stored" });
     let previous = SUBJECTS[0];
     for (let i = 0; i < 20; i++) {
-      rollAndSettle();
-      const current = subjectOnCard();
+      roll();
+      const current = subjectOnCard()!;
       expect(current).not.toBe(previous);
       expect(SUBJECTS).toContain(current);
-      previous = current!;
+      previous = current;
     }
+  });
+});
+
+describe("errors and fallbacks", () => {
+  it("shows the error and retries the same subject when the card is clicked", async () => {
+    await open({ subject: "Oceans", ...tides }, () => 0);
+    roll(); // → Cities
+    await lastPost().respond(502, { detail: "Couldn't generate a prompt right now. Please try again." });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't generate a prompt right now.");
+    expect(screen.getByText("Tap the card to try again")).toBeInTheDocument();
+    expect(card()).toHaveAttribute("data-face", "front");
+
+    fireEvent.click(card());
+    expect(posts()).toHaveLength(2);
+    expect(lastPost().subject).toBe("Cities");
+    await lastPost().respond(200, { subject: "Cities", ...subway, source: "live" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about a subway.");
+  });
+
+  it("labels a stored fallback and switches to its subject", async () => {
+    await open({ subject: "Oceans", ...tides }, () => 0);
+    roll(); // asks for Cities...
+    await lastPost().respond(200, { subject: "Forests", ...moss, source: "stored" }); // ...gets Forests
+
+    expect(subjectOnCard()).toBe("Forests");
+    expect(screen.getByTestId("prompt-text")).toHaveTextContent("Write about moss.");
+    expect(screen.getByText(/saved prompt/i)).toBeInTheDocument();
+    fireEvent.click(card());
+    expect(card().querySelector(".card-back .card-subject")).toHaveTextContent("Forests");
+
+    roll(); // from Forests (index 2), rng 0 → Oceans; never Forests again
+    expect(subjectOnCard()).toBe("Oceans");
+  });
+
+  it("does not label live prompts as saved", async () => {
+    await open({ subject: "Oceans", ...tides }, () => 0);
+    roll();
+    await lastPost().respond(200, { subject: "Cities", ...subway, source: "live" });
+    expect(screen.queryByText(/saved prompt/i)).not.toBeInTheDocument();
   });
 });
 
