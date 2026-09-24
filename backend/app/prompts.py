@@ -11,24 +11,32 @@ from app.db import Db
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
-SYSTEM_PROMPT = """You are a warm, encouraging creative-writing teacher.
-Given a subject, write:
-- prompt: one open-ended writing prompt about that subject, 1-2 sentences, addressed to the student \
-("you"), concrete enough to start writing immediately.
-- example: a sample response to that prompt, 60-120 words, showing vivid, specific detail a student \
-could learn from. Plain prose, no title, no preamble.
-Keep everything appropriate for a school classroom."""
+GRADE_LEVEL = "grades 4-6 (ages 9-12)"
+
+# Shared by the single and batch prompts so the two can't drift apart.
+_WRITING_GUIDELINES = f"""Your students are in {GRADE_LEVEL}. Write for them:
+- prompt: one open-ended writing prompt about the subject, 1-2 short sentences, addressed to the \
+student ("you"). Connect it to things a 9-12 year old really experiences or imagines: school, \
+friends, family, pets, games, sports, nature, holidays, adventures and make-believe. Use everyday \
+words a 4th grader knows. Avoid adult topics (jobs, money, dating, bills) and looking back on \
+decades past.
+- example: a sample response to that prompt, 60-100 words, written as a strong student in \
+{GRADE_LEVEL} would write it: first person, the voice and experiences of a kid that age. Use \
+clear, mostly short sentences, a few vivid details and strong verbs, and vocabulary a student \
+could realistically use themselves. Plain prose, no title, no preamble.
+Keep everything warm, encouraging and appropriate for an elementary or middle school classroom."""
+
+SYSTEM_PROMPT = f"""You are a warm, encouraging creative-writing teacher.
+Given a subject, write a writing prompt and an example response.
+{_WRITING_GUIDELINES}"""
 
 
-BATCH_SYSTEM_PROMPT = """You are a warm, encouraging creative-writing teacher.
+BATCH_SYSTEM_PROMPT = f"""You are a warm, encouraging creative-writing teacher.
 For EACH subject the user lists, write one entry with:
 - subject: the subject, copied exactly as given.
-- prompt: one open-ended writing prompt about that subject, 1-2 sentences, addressed to the student \
-("you"), concrete enough to start writing immediately.
-- example: a sample response to that prompt, 60-120 words, showing vivid, specific detail a student \
-could learn from. Plain prose, no title, no preamble.
+- prompt and example, following the guidelines below.
 Make each prompt feel distinct: vary the angle, form and opening words across subjects.
-Keep everything appropriate for a school classroom."""
+{_WRITING_GUIDELINES}"""
 
 # A student is waiting on a card click: give up after this long and serve a stored prompt instead.
 LIVE_DEADLINE_SECONDS = 20

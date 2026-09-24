@@ -324,3 +324,31 @@ def test_startup_batch_keeps_generous_limits(monkeypatch):
     prompts.generate_batch(["Oceans"])
     assert captured["num_retries"] == llm.NUM_RETRIES
     assert captured["timeout"] == prompts.BATCH_TIMEOUT_SECONDS
+
+
+# --- Audience -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("system_prompt", [prompts.SYSTEM_PROMPT, prompts.BATCH_SYSTEM_PROMPT])
+def test_prompts_target_grades_4_to_6(system_prompt):
+    assert "grades 4-6 (ages 9-12)" in system_prompt
+    assert "60-100 words" in system_prompt  # example length suited to the grade level
+    assert "voice and experiences of a kid" in system_prompt
+
+
+def test_single_and_batch_prompts_share_the_same_guidelines():
+    guidelines = prompts._WRITING_GUIDELINES
+    assert guidelines in prompts.SYSTEM_PROMPT
+    assert guidelines in prompts.BATCH_SYSTEM_PROMPT
+
+
+def test_card_click_sends_the_grade_level_guidelines(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response('{"prompt": "P", "example": "E"}')
+
+    monkeypatch.setattr(llm, "completion", fake_completion)
+    prompts.generate_for_subject("Oceans")
+    assert captured["messages"][0] == {"role": "system", "content": prompts.SYSTEM_PROMPT}
