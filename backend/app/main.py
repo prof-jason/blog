@@ -31,7 +31,7 @@ def create_app(
             db_path,
             prompt_store.load_subjects(subjects_path),
             target=warm_up_count,
-            generate=prompts.generate_for_subject,
+            generate_batch=prompts.generate_batch,
         )
         app.state.prompt_warmer = warmer
         warmer.start()  # runs in the background; startup doesn't wait for the LLM

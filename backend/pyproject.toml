@@ -25,3 +25,4 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["live_llm: makes exactly one real OpenRouter request; also needs RUN_LIVE_LLM=1"]

@@ -8,7 +8,6 @@ import threading
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
-from typing import Protocol
 
 from pydantic import BaseModel
 
@@ -17,18 +16,13 @@ from app.db import connect
 
 logger = logging.getLogger(__name__)
 
-WARM_UP_WORKERS = 3
-# Stop after this many attempts per target prompt so a dead provider doesn't retry forever.
-MAX_ATTEMPTS_PER_PROMPT = 2
+# The free tier limits requests per day, so warm-up asks for every prompt in one request and makes
+# at most one more if fewer than half came back usable.
+MAX_WARM_UP_REQUESTS = 2
 
 
 class StoredPrompt(BaseModel):
     subject: str
-    prompt: str
-    example: str
-
-
-class Generated(Protocol):
     prompt: str
     example: str
 
@@ -64,75 +58,65 @@ def find_fallback(db: sqlite3.Connection, subject: str) -> StoredPrompt | None:
 
 
 class PromptWarmer:
-    """Generates `target` prompts on background threads and stores them."""
+    """Pre-generates `target` prompts (one per distinct subject) on a background thread."""
 
     def __init__(
         self,
         db_path: Path,
         subjects: list[str],
         target: int,
-        generate: Callable[[str], Generated],
-        workers: int = WARM_UP_WORKERS,
+        generate_batch: Callable[[list[str]], list[StoredPrompt]],
         rng: random.Random | None = None,
     ):
         self._db_path = db_path
         self._subjects = (rng or random.Random()).sample(subjects, len(subjects))
-        self._target = target if subjects else 0
-        self._generate = generate
-        self._workers = workers
-        self._max_attempts = self._target * MAX_ATTEMPTS_PER_PROMPT
-        self._lock = threading.Lock()
+        self._target = min(target, len(subjects))
+        self._generate_batch = generate_batch
         self._stop = threading.Event()
-        self._threads: list[threading.Thread] = []
+        self._thread: threading.Thread | None = None
         self.stored = 0
-        self.attempts = 0
-        self._in_flight = 0
-        self._finished = False
+        self.requests = 0
 
     def start(self) -> None:
         if self._target <= 0:
             return
-        logger.info("Pre-generating %d fallback prompts", self._target)
-        for i in range(min(self._workers, self._target)):
-            thread = threading.Thread(target=self._work, name=f"prompt-warmer-{i}", daemon=True)
-            thread.start()
-            self._threads.append(thread)
+        logger.info("Pre-generating %d fallback prompts in one request", self._target)
+        self._thread = threading.Thread(target=self._run, name="prompt-warmer", daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
 
     def join(self, timeout: float | None = None) -> None:
-        for thread in self._threads:
-            thread.join(timeout)
+        if self._thread:
+            self._thread.join(timeout)
 
-    def _next_subject(self) -> str | None:
-        with self._lock:
-            done = self.stored + self._in_flight >= self._target
-            if done or self.attempts >= self._max_attempts or self._stop.is_set():
-                return None
-            subject = self._subjects[self.attempts % len(self._subjects)]
-            self.attempts += 1
-            self._in_flight += 1
-            return subject
+    def _enough(self) -> bool:
+        # After the first request, half or more usable is good enough to not spend another.
+        return self.requests > 0 and self.stored * 2 >= self._target
 
-    def _work(self) -> None:
-        while (subject := self._next_subject()) is not None:
-            stored = False
+    def _run(self) -> None:
+        pending = self._subjects[: self._target]
+        while pending and self.requests < MAX_WARM_UP_REQUESTS and not self._enough():
+            if self._stop.is_set():
+                return
+            self.requests += 1
             try:
-                result = self._generate(subject)
-                if not self._stop.is_set():
-                    with closing(connect(self._db_path)) as db:
-                        save(db, StoredPrompt(subject=subject, prompt=result.prompt, example=result.example))
-                    stored = True
+                results = self._generate_batch(pending)
             except llm.LLMError as exc:
-                logger.warning("Warm-up generation failed for %r: %s", subject, exc)
+                logger.warning("Warm-up request %d failed: %s", self.requests, exc)
+                continue
             except Exception:
-                logger.exception("Unexpected warm-up failure for %r", subject)
-            finally:
-                with self._lock:
-                    self._in_flight -= 1
-                    self.stored += stored
-        with self._lock:
-            if self._in_flight == 0 and not self._finished and not self._stop.is_set():
-                self._finished = True
-                logger.info("Prompt warm-up finished: %d/%d stored", self.stored, self._target)
+                logger.exception("Unexpected warm-up failure")
+                continue
+            if self._stop.is_set():
+                return
+            with closing(connect(self._db_path)) as db:
+                for prompt in results:
+                    save(db, prompt)
+            self.stored += len(results)
+            done = {prompt.subject for prompt in results}
+            pending = [subject for subject in pending if subject not in done]
+        logger.info(
+            "Prompt warm-up finished: %d/%d stored using %d request(s)", self.stored, self._target, self.requests
+        )
