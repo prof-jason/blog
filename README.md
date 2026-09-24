@@ -36,7 +36,7 @@ cd frontend && npm install && npm run dev
 ## Tests
 
 ```bash
-cd backend && uv run pytest                       # LLM mocked
-cd backend && RUN_LIVE_LLM=1 uv run pytest        # also makes one real LLM call
+cd backend && uv run pytest                       # never calls OpenRouter (a guard fails any test that tries)
+cd backend && RUN_LIVE_LLM=1 uv run pytest        # plus exactly ONE real OpenRouter request, no retries
 cd frontend && npm test
 ```
